@@ -8,6 +8,9 @@
 #include <mem.h>
 #include <zephyr/dt-bindings/gpio/gpio.h>
 
+#include <zephyr/dt-bindings/clock/numaker_m48x_clock.h>
+#include <zephyr/dt-bindings/reset/numaker_m48x_reset.h>
+
 / {
 	cpus {
 		#address-cells = <1>;
@@ -37,6 +40,30 @@
 	};
 
 	soc {
+		scc: system-clock-controller@40000200 {
+			compatible = "nuvoton,numaker-scc";
+			reg = <0x40000200 0x100>;
+			#clock-cells = <0>;
+			/* hxt = "enable"; */
+			lxt = "enable";
+			clk-pclkdiv = <(NUMAKER_CLK_PCLKDIV_APB0DIV_DIV2 |
+					 NUMAKER_CLK_PCLKDIV_APB1DIV_DIV2)>;
+			core-clock = <192000000>;
+			powerdown-mode = <NUMAKER_CLK_PMUCTL_PDMSEL_DPD>;
+
+			pcc: peripheral-clock-controller {
+				compatible = "nuvoton,numaker-pcc";
+				#clock-cells = <3>;
+			};
+		};
+
+		rst: reset-controller@40000000 {
+			compatible = "nuvoton,numaker-rst";
+			reg = <0x40000000 0x20>;
+			#reset-cells = <1>;
+			status = "okay";
+		};
+
 		pinctrl: pinctrl@40000030 {
 			compatible = "nuvoton,numicro-pinctrl";
 			reg = <0x40000030 0x40
