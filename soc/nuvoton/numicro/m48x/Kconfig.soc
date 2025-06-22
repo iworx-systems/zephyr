@@ -6,6 +6,7 @@
 config SOC_SERIES_M48X
 	bool
 	select SOC_FAMILY_NUMICRO
+	select SOC_FAMILY_NUMAKER
 	help
 	  Enable support for NUVOTON M48X MCU series
 
