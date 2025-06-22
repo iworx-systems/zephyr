@@ -7,4 +7,7 @@ if SOC_SERIES_M48X
 
 rsource "Kconfig.defconfig.m48*"
 
+config RESET
+	default y
+
 endif # SOC_SERIES_M48X
