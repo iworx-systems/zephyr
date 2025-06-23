@@ -11,6 +11,7 @@ config SOC_SERIES_M48X
 	select CPU_HAS_ARM_MPU
 	select RESET
 	select CORTEX_M_SYSTICK if SYS_CLOCK_EXISTS
+	select HAS_POWEROFF
 
 config SOC_M487
 	select HAS_NUMICRO_HAL
