@@ -80,6 +80,7 @@ struct numaker_usbd_config {
 	const struct pinctrl_dev_config *pincfg;
 	uint32_t num_bidir_endpoints;
 	uint32_t dmabuf_size;
+	uint32_t dmabuf_offset;
 	bool disallow_iso_inout_same;
 };
 
@@ -487,7 +488,7 @@ static inline uint32_t numaker_usbd_buf_base(const struct device *dev)
 	const struct numaker_usbd_config *config = dev->config;
 	USBD_T *const base = config->base;
 
-	return ((uint32_t)base + 0x800ul);
+	return ((uint32_t)base + config->dmabuf_offset);
 }
 
 /* Copy to user buffer from Setup FIFO */
@@ -1986,6 +1987,7 @@ static int numaker_udbd_init(const struct device *dev)
 		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                    \
 		.num_bidir_endpoints = DT_INST_PROP(inst, num_bidir_endpoints),                    \
 		.dmabuf_size = DT_INST_PROP(inst, dma_buffer_size),                                \
+		.dmabuf_offset = DT_INST_PROP(inst, dma_buffer_offset),                            \
 		.disallow_iso_inout_same = DT_INST_PROP(inst, disallow_iso_in_out_same_number),    \
 	};                                                                                         \
                                                                                                    \
