@@ -26,6 +26,12 @@ properties:
     description: |
       Size of DMA buffer in bytes
 
+  dma-buffer-offset:
+    type: int
+    required: true
+    description: |
+      Memory offset to the start of the DMA buffer from the USBD controller's base address.
+
   disallow-iso-in-out-same-number:
     type: boolean
     description: |
