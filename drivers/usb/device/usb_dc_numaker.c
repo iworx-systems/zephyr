@@ -48,6 +48,11 @@ LOG_MODULE_REGISTER(usb_dc_numaker, CONFIG_USB_DRIVER_LOG_LEVEL);
  */
 #define NUMAKER_USBD_EP_MAXNUM 25ul
 
+/* Only use EPINTSTS (not available on M48x) if there are more than 12 endpoints, 
+ * otherwise we can just use INTSTS which has 12 bits allocated for this purpose.
+ */
+#define NUMAKER_USBD_USE_EPINTSTS	(DT_PROP(DT_COMPAT_GET_ANY_STATUS_OKAY(nuvoton_numaker_usbd), num_bidir_endpoints) > 12)
+
 /* Message type */
 #define NUMAKER_USBD_MSG_TYPE_SW_RECONN 0 /* S/W reconnect */
 #define NUMAKER_USBD_MSG_TYPE_CB_STATE  1 /* Callback for usb_dc_status_code */
@@ -487,7 +492,7 @@ static inline uint32_t numaker_usbd_buf_base(const struct device *dev)
 {
 	const struct numaker_usbd_config *config = dev->config;
 	USBD_T *const base = config->base;
-
+	
 	return ((uint32_t)base + config->dmabuf_offset);
 }
 
@@ -1181,10 +1186,16 @@ static void numaker_udbd_isr(const struct device *dev)
 		}
 
 		/* EP events */
+#if		NUMAKER_USBD_USE_EPINTSTS
+		// Get endpoint status from EPINTSTS
 		epintsts = base->EPINTSTS;
-
 		base->EPINTSTS = epintsts;
-
+#else
+		// Get endpoint status from INTSTS
+		epintsts = (base->INTSTS >> USBD_INTSTS_EPEVT0_Pos) & BIT_MASK(config->num_bidir_endpoints);
+		// Clear EP interrupts
+		base->INTSTS = (epintsts << USBD_INTSTS_EPEVT0_Pos);
+#endif
 		while (epintsts) {
 			uint32_t ep_hw_idx = u32_count_trailing_zeros(epintsts);
 			USBD_EP_T *ep_base = numaker_usbd_ep_base(dev, ep_hw_idx);
