@@ -12,6 +12,14 @@ config SOC_SERIES_M48X
 	select CORTEX_M_SYSTICK if SYS_CLOCK_EXISTS
 	select HAS_POWEROFF
 
+config SOC_M483
+	select HAS_NUMICRO_HAL
+	select HAS_NUMAKER_HAL
+
+config SOC_M484
+	select HAS_NUMICRO_HAL
+	select HAS_NUMAKER_HAL
+
 config SOC_M487
 	select HAS_NUMICRO_HAL
 	select HAS_NUMAKER_HAL
