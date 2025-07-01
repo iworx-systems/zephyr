@@ -3,4 +3,6 @@ family:
   series:
   - name: m48x
     socs:
+    - name: m483
+    - name: m484
     - name: m487
