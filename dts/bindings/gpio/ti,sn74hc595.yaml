@@ -10,7 +10,6 @@ include: [gpio-controller.yaml, spi-device.yaml]
 properties:
   reset-gpios:
     type: phandle-array
-    required: true
     description: Reset pin
 
   ngpios:

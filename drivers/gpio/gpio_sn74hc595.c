@@ -30,7 +30,7 @@ struct gpio_sn74hc595_config {
 	struct gpio_driver_config config;
 
 	struct spi_dt_spec bus;
-	struct gpio_dt_spec reset_gpio;
+	struct gpio_dt_spec *reset_gpio;
 };
 
 struct gpio_sn74hc595_drv_data {
@@ -159,17 +159,19 @@ static int gpio_sn74hc595_init(const struct device *dev)
 		return -ENODEV;
 	}
 
-	if (!gpio_is_ready_dt(&config->reset_gpio)) {
-		LOG_ERR("GPIO port %s not ready", config->reset_gpio.port->name);
-		return -ENODEV;
-	}
+	if(config->reset_gpio){
+		if (!gpio_is_ready_dt(config->reset_gpio)) {
+			LOG_ERR("GPIO port %s not ready", config->reset_gpio->port->name);
+			return -ENODEV;
+		}
 
-	if (gpio_pin_configure_dt(&config->reset_gpio, GPIO_OUTPUT_ACTIVE) < 0) {
-		LOG_ERR("Unable to configure RST GPIO pin %u", config->reset_gpio.pin);
-		return -EINVAL;
-	}
+		if (gpio_pin_configure_dt(config->reset_gpio, GPIO_OUTPUT_ACTIVE) < 0) {
+			LOG_ERR("Unable to configure RST GPIO pin %u", config->reset_gpio->pin);
+			return -EINVAL;
+		}
 
-	gpio_pin_set(config->reset_gpio.port, config->reset_gpio.pin, 0);
+		gpio_pin_set(config->reset_gpio->port, config->reset_gpio->pin, 0);
+	}
 
 	drv_data->output = 0U;
 	return 0;
@@ -179,6 +181,11 @@ static int gpio_sn74hc595_init(const struct device *dev)
 	((uint16_t)(SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8)))
 
 #define SN74HC595_INIT(n)									\
+	/* Declare reset gpios struct if it exists */							\
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(n, reset_gpios),						\
+		(struct gpio_dt_spec sn74hc595_##n##_reset_gpio = 					\
+			GPIO_DT_SPEC_INST_GET(n, reset_gpios);),(EMPTY))				\
+																			\
 	static struct gpio_sn74hc595_drv_data sn74hc595_data_##n = {				\
 		.output = 0,									\
 		.lock = Z_MUTEX_INITIALIZER(sn74hc595_data_##n.lock),				\
@@ -190,7 +197,10 @@ static int gpio_sn74hc595_init(const struct device *dev)
 				GPIO_PORT_PIN_MASK_FROM_DT_INST(n),				\
 		},										\
 		.bus = SPI_DT_SPEC_INST_GET(n, SN74HC595_SPI_OPERATION, 0),			\
-		.reset_gpio = GPIO_DT_SPEC_INST_GET(n, reset_gpios),				\
+		.reset_gpio = COND_CODE_1(DT_INST_NODE_HAS_PROP(n, reset_gpios),	\
+				(&sn74hc595_##n##_reset_gpio),								\
+				(NULL)														\
+			)																\
 	};											\
 												\
 	DEVICE_DT_DEFINE(DT_DRV_INST(n), &gpio_sn74hc595_init, NULL,				\
