@@ -1571,6 +1571,9 @@ static int udc_numaker_disable(const struct device *dev)
 
 static int udc_numaker_init(const struct device *dev)
 {
+	const struct udc_numaker_config *config = dev->config;
+	struct udc_data *data = dev->data;
+	USBD_T *base = config->base;
 	int err;
 
 	/* Initialize USBD H/W */
@@ -1594,6 +1597,11 @@ static int udc_numaker_init(const struct device *dev)
 	if (udc_ep_enable_internal(dev, USB_CONTROL_EP_IN, USB_EP_TYPE_CONTROL, 64, 0)) {
 		LOG_ERR("Failed to enable control endpoint");
 		return -EIO;
+	}
+
+	/* Enable VBUS detect early */
+	if (data->caps.can_detect_vbus) {
+		base->INTEN = USBD_INT_FLDET;
 	}
 
 	return 0;
@@ -1640,6 +1648,7 @@ static int udc_numaker_driver_preinit(const struct device *dev)
 
 	data->caps.rwup = true;
 	data->caps.addr_before_status = true;
+	data->caps.can_detect_vbus = true;
 	data->caps.mps0 = UDC_MPS0_64;
 
 	/* Some soc series don't allow ISO IN/OUT to be assigned the same EP number.
