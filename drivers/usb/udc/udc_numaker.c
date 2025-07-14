@@ -1197,11 +1197,19 @@ static void numaker_usbd_isr(const struct device *dev)
 	uint32_t volatile usbd_intsts = base->INTSTS;
 	uint32_t volatile usbd_bus_state = base->ATTR;
 
+	/* Focus on enabled
+	 *
+	 * NOTE: INTSTS has more interrupt bits than INTEN: SETUP and EPEVTx.
+	 * For SETUP, it is added back for not missing.
+	 * For EPEVTx, they are caught by EPINTSTS.
+	 */
+	usbd_intsts &= base->INTEN | USBD_INTSTS_SETUP;
+
+	/* Clear event flag */
+	base->INTSTS = usbd_intsts;
+
 	/* USB plug-in/unplug */
 	if (usbd_intsts & USBD_INTSTS_FLDET) {
-		/* Floating detect */
-		base->INTSTS = USBD_INTSTS_FLDET;
-
 		if (base->VBUSDET & USBD_VBUSDET_VBUSDET_Msk) {
 			/* USB plug-in */
 
@@ -1227,17 +1235,11 @@ static void numaker_usbd_isr(const struct device *dev)
 
 	/* USB wake-up */
 	if (usbd_intsts & USBD_INTSTS_WAKEUP) {
-		/* Clear event flag */
-		base->INTSTS = USBD_INTSTS_WAKEUP;
-
 		LOG_DBG("USB wake-up");
 	}
 
 	/* USB reset/suspend/resume */
 	if (usbd_intsts & USBD_INTSTS_BUS) {
-		/* Clear event flag */
-		base->INTSTS = USBD_INTSTS_BUS;
-
 		if (usbd_bus_state & USBD_STATE_USBRST) {
 			/* Bus reset */
 
@@ -1277,9 +1279,6 @@ static void numaker_usbd_isr(const struct device *dev)
 
 	/* USB SOF */
 	if (usbd_intsts & USBD_INTSTS_SOFIF_Msk) {
-		/* Clear event flag */
-		base->INTSTS = USBD_INTSTS_SOFIF_Msk;
-
 		/* UDC stack would handle bottom-half processing */
 		udc_submit_event(dev, UDC_EVT_SOF, 0);
 	}
@@ -1292,9 +1291,6 @@ static void numaker_usbd_isr(const struct device *dev)
 		if (usbd_intsts & USBD_INTSTS_SETUP) {
 			USBD_EP_T *ep0_base = numaker_usbd_ep_base(dev, EP0);
 			USBD_EP_T *ep1_base = numaker_usbd_ep_base(dev, EP1);
-
-			/* Clear event flag */
-			base->INTSTS = USBD_INTSTS_SETUP;
 
 			/* Clear the data IN/OUT ready flag of control endpoints */
 			ep0_base->CFGP |= USBD_CFGP_CLRRDY_Msk;
@@ -1318,6 +1314,7 @@ static void numaker_usbd_isr(const struct device *dev)
 		/* EP events */
 		epintsts = base->EPINTSTS;
 
+		/* Clear event flag */
 		base->EPINTSTS = epintsts;
 
 		while (epintsts) {
