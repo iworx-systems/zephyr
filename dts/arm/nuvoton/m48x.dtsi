@@ -159,7 +159,7 @@
 			reg = <0x40061000 0x6c>;
 			interrupts = <23 0>;
 			resets = <&rst NUMAKER_SPI0_RST>;
-			clocks = <&pcc NUMAKER_SPI0_MODULE NUMAKER_CLK_CLKSEL2_SPI0SEL_HIRC 0>;
+			clocks = <&pcc NUMAKER_SPI0_MODULE NUMAKER_CLK_CLKSEL2_SPI0SEL_PLL 0>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
@@ -170,7 +170,7 @@
 			reg = <0x40062000 0x6c>;
 			interrupts = <51 0>;
 			resets = <&rst NUMAKER_SPI1_RST>;
-			clocks = <&pcc NUMAKER_SPI1_MODULE NUMAKER_CLK_CLKSEL2_SPI1SEL_HIRC 0>;
+			clocks = <&pcc NUMAKER_SPI1_MODULE NUMAKER_CLK_CLKSEL2_SPI1SEL_PLL 0>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
@@ -181,7 +181,7 @@
 			reg = <0x40063000 0x6c>;
 			interrupts = <52 0>;
 			resets = <&rst NUMAKER_SPI2_RST>;
-			clocks = <&pcc NUMAKER_SPI2_MODULE NUMAKER_CLK_CLKSEL2_SPI2SEL_HIRC 0>;
+			clocks = <&pcc NUMAKER_SPI2_MODULE NUMAKER_CLK_CLKSEL2_SPI2SEL_PLL 0>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
@@ -192,7 +192,7 @@
 			reg = <0x40064000 0x6c>;
 			interrupts = <62 0>;
 			resets = <&rst NUMAKER_SPI3_RST>;
-			clocks = <&pcc NUMAKER_SPI3_MODULE NUMAKER_CLK_CLKSEL2_SPI3SEL_HIRC 0>;
+			clocks = <&pcc NUMAKER_SPI3_MODULE NUMAKER_CLK_CLKSEL2_SPI3SEL_PLL 0>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
@@ -203,7 +203,7 @@
 			reg = <0x40070000 0x1000>;
 			interrupts = <36 0>;
 			resets = <&rst NUMAKER_UART0_RST>;
-			clocks = <&pcc NUMAKER_UART0_MODULE NUMAKER_CLK_CLKSEL1_UART0SEL_HIRC
+			clocks = <&pcc NUMAKER_UART0_MODULE NUMAKER_CLK_CLKSEL1_UART0SEL_PLL
 				  NUMAKER_CLK_CLKDIV0_UART0(1)>;
 			status = "disabled";
 		};
@@ -213,7 +213,7 @@
 			reg = <0x40071000 0x1000>;
 			interrupts = <37 0>;
 			resets = <&rst NUMAKER_UART1_RST>;
-			clocks = <&pcc NUMAKER_UART1_MODULE NUMAKER_CLK_CLKSEL1_UART1SEL_HIRC
+			clocks = <&pcc NUMAKER_UART1_MODULE NUMAKER_CLK_CLKSEL1_UART1SEL_PLL
 				  NUMAKER_CLK_CLKDIV0_UART1(1)>;
 			status = "disabled";
 		};
@@ -223,7 +223,7 @@
 			reg = <0x40072000 0x1000>;
 			interrupts = <48 0>;
 			resets = <&rst NUMAKER_UART2_RST>;
-			clocks = <&pcc NUMAKER_UART2_MODULE NUMAKER_CLK_CLKSEL3_UART2SEL_HIRC
+			clocks = <&pcc NUMAKER_UART2_MODULE NUMAKER_CLK_CLKSEL3_UART2SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART2(1)>;
 			status = "disabled";
 		};
@@ -233,7 +233,7 @@
 			reg = <0x40073000 0x1000>;
 			interrupts = <49 0>;
 			resets = <&rst NUMAKER_UART3_RST>;
-			clocks = <&pcc NUMAKER_UART3_MODULE NUMAKER_CLK_CLKSEL3_UART3SEL_HIRC
+			clocks = <&pcc NUMAKER_UART3_MODULE NUMAKER_CLK_CLKSEL3_UART3SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART3(1)>;
 			status = "disabled";
 		};
@@ -243,7 +243,7 @@
 			reg = <0x40074000 0x1000>;
 			interrupts = <74 0>;
 			resets = <&rst NUMAKER_UART4_RST>;
-			clocks = <&pcc NUMAKER_UART4_MODULE NUMAKER_CLK_CLKSEL3_UART4SEL_HIRC
+			clocks = <&pcc NUMAKER_UART4_MODULE NUMAKER_CLK_CLKSEL3_UART4SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART4(1)>;
 			status = "disabled";
 		};
@@ -253,7 +253,7 @@
 			reg = <0x40075000 0x1000>;
 			interrupts = <75 0>;
 			resets = <&rst NUMAKER_UART5_RST>;
-			clocks = <&pcc NUMAKER_UART5_MODULE NUMAKER_CLK_CLKSEL3_UART5SEL_HIRC
+			clocks = <&pcc NUMAKER_UART5_MODULE NUMAKER_CLK_CLKSEL3_UART5SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART5(1)>;
 			status = "disabled";
 		};
@@ -263,7 +263,7 @@
 			reg = <0x40076000 0x1000>;
 			interrupts = <102 0>;
 			resets = <&rst NUMAKER_UART6_RST>;
-			clocks = <&pcc NUMAKER_UART6_MODULE NUMAKER_CLK_CLKSEL3_UART6SEL_HIRC
+			clocks = <&pcc NUMAKER_UART6_MODULE NUMAKER_CLK_CLKSEL3_UART6SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART6(1)>;
 			status = "disabled";
 		};
@@ -273,7 +273,7 @@
 			reg = <0x40077000 0x1000>;
 			interrupts = <103 0>;
 			resets = <&rst NUMAKER_UART7_RST>;
-			clocks = <&pcc NUMAKER_UART7_MODULE NUMAKER_CLK_CLKSEL3_UART7SEL_HIRC
+			clocks = <&pcc NUMAKER_UART7_MODULE NUMAKER_CLK_CLKSEL3_UART7SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART7(1)>;
 			status = "disabled";
 		};
