@@ -68,14 +68,6 @@ static int sn74hc595_write(const struct device *dev, uint32_t value)
 	return ret;
 }
 
-static int gpio_sn74hc595_config(const struct device *dev, gpio_pin_t pin, gpio_flags_t flags)
-{
-	ARG_UNUSED(dev);
-	ARG_UNUSED(pin);
-	ARG_UNUSED(flags);
-	return 0;
-}
-
 static int gpio_sn74hc595_port_get_raw(const struct device *dev, uint32_t *value)
 {
 	struct gpio_sn74hc595_drv_data *drv_data = dev->data;
@@ -119,6 +111,22 @@ static int gpio_sn74hc595_port_set_bits_raw(const struct device *dev, uint32_t m
 static int gpio_sn74hc595_port_clear_bits_raw(const struct device *dev, uint32_t mask)
 {
 	return gpio_sn74hc595_port_set_masked_raw(dev, mask, 0U);
+}
+
+static int gpio_sn74hc595_config(const struct device *dev, gpio_pin_t pin, gpio_flags_t flags)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(pin);
+	ARG_UNUSED(flags);
+
+	// Just need to set the initial state
+	if ((flags & GPIO_OUTPUT_INIT_HIGH) != 0) {
+		return gpio_sn74hc595_port_set_bits_raw(dev, BIT(pin));
+	} else if ((flags & GPIO_OUTPUT_INIT_LOW) != 0) {
+		return gpio_sn74hc595_port_clear_bits_raw(dev, BIT(pin));
+	}
+
+	return 0;
 }
 
 static int gpio_sn74hc595_port_toggle_bits(const struct device *dev, uint32_t mask)
@@ -194,6 +202,11 @@ static int gpio_sn74hc595_init(const struct device *dev)
 		 * clocking the SRCLK pin
 		 */
 		k_busy_wait(1);
+	}
+	else{
+		// Intialize outputs to 0
+		drv_data->output = 0xFF;
+		return gpio_sn74hc595_port_clear_bits_raw(dev, 0xFF);
 	}
 
 	k_mutex_lock(&drv_data->lock, K_FOREVER);
