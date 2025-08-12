@@ -54,14 +54,6 @@ static int sn74hc595_spi_write(const struct device *dev, void *buf, size_t len_b
 	return spi_write_dt(&config->bus, &tx);
 }
 
-static int gpio_sn74hc595_config(const struct device *dev, gpio_pin_t pin, gpio_flags_t flags)
-{
-	ARG_UNUSED(dev);
-	ARG_UNUSED(pin);
-	ARG_UNUSED(flags);
-	return 0;
-}
-
 static int gpio_sn74hc595_port_get_raw(const struct device *dev, uint32_t *value)
 {
 	struct gpio_sn74hc595_drv_data *drv_data = dev->data;
@@ -110,6 +102,22 @@ static int gpio_sn74hc595_port_set_bits_raw(const struct device *dev, uint32_t m
 static int gpio_sn74hc595_port_clear_bits_raw(const struct device *dev, uint32_t mask)
 {
 	return gpio_sn74hc595_port_set_masked_raw(dev, mask, 0U);
+}
+
+static int gpio_sn74hc595_config(const struct device *dev, gpio_pin_t pin, gpio_flags_t flags)
+{
+	ARG_UNUSED(dev);
+	ARG_UNUSED(pin);
+	ARG_UNUSED(flags);
+
+	// Just need to set the initial state
+	if ((flags & GPIO_OUTPUT_INIT_HIGH) != 0) {
+		return gpio_sn74hc595_port_set_bits_raw(dev, BIT(pin));
+	} else if ((flags & GPIO_OUTPUT_INIT_LOW) != 0) {
+		return gpio_sn74hc595_port_clear_bits_raw(dev, BIT(pin));
+	}
+
+	return 0;
 }
 
 static int gpio_sn74hc595_port_toggle_bits(const struct device *dev, uint32_t mask)
@@ -171,6 +179,11 @@ static int gpio_sn74hc595_init(const struct device *dev)
 		}
 
 		gpio_pin_set(config->reset_gpio->port, config->reset_gpio->pin, 0);
+	}
+	else{
+		// Intialize outputs to 0
+		drv_data->output = 0xFF;
+		return gpio_sn74hc595_port_clear_bits_raw(dev, 0xFF);
 	}
 
 	drv_data->output = 0U;
