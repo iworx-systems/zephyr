@@ -12,4 +12,14 @@
 			pinmux = <UART0_RXD_PB12>, <UART0_TXD_PB13>;
 		};
 	};
+
+	/* USBD multi-function pins for VBUS, D+, D-, and ID pins */
+	usbd_default: usbd_default {
+		group0 {
+			pinmux = <USB_VBUS_PA12>,
+					<USB_D_N_PA13>,
+					<USB_D_P_PA14>,
+					<USB_OTG_ID_PA15>;
+		};
+	};
 };
