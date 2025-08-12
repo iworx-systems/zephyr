@@ -700,6 +700,7 @@ static int i2c_numaker_init(const struct device *dev)
 	/* Equivalent to CLK_EnableModuleClock() */
 	err = clock_control_on(config->clkctrl_dev, (clock_control_subsys_t) &scc_subsys);
 	if (err != 0) {
+		LOG_ERR("%s: Failed to enable clock (ret:%i)", dev->name, err);
 		goto cleanup;
 	}
 	/* Equivalent to CLK_SetModuleClock() */
@@ -707,12 +708,14 @@ static int i2c_numaker_init(const struct device *dev)
 				      (clock_control_subsys_t) &scc_subsys,
 				      NULL);
 	if (err != 0) {
+		LOG_ERR("%s: Failed to set clock (ret:%i)", dev->name, err);
 		goto cleanup;
 	}
 
 	/* Configure pinmux (NuMaker's SYS MFP) */
 	err = pinctrl_apply_state(config->pincfg, PINCTRL_STATE_DEFAULT);
 	if (err != 0) {
+		LOG_ERR("%s: Failed to configure pins (ret:%i)", dev->name, err);
 		goto cleanup;
 	}
 
@@ -721,6 +724,7 @@ static int i2c_numaker_init(const struct device *dev)
 
 	err = i2c_numaker_configure(dev, I2C_MODE_CONTROLLER | i2c_map_dt_bitrate(config->bitrate));
 	if (err != 0) {
+		LOG_ERR("%s: Failed to configure bus (ret:%i)", dev->name, err);
 		goto cleanup;
 	}
 
