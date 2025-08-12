@@ -177,8 +177,9 @@ static int gpio_sn74hc595_init(const struct device *dev)
 	return 0;
 }
 
-#define SN74HC595_SPI_OPERATION									\
-	((uint16_t)(SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8)))
+#define SN74HC595_SPI_OPERATION(n)											\
+	((uint16_t)(SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8)		\
+			   IF_ENABLED(DT_INST_PROP(n, cs_invert), (| SPI_CS_ACTIVE_HIGH))))
 
 #define SN74HC595_INIT(n)									\
 	/* Declare reset gpios struct if it exists */							\
@@ -196,7 +197,7 @@ static int gpio_sn74hc595_init(const struct device *dev)
 			.port_pin_mask =							\
 				GPIO_PORT_PIN_MASK_FROM_DT_INST(n),				\
 		},										\
-		.bus = SPI_DT_SPEC_INST_GET(n, SN74HC595_SPI_OPERATION, 0),			\
+		.bus = SPI_DT_SPEC_INST_GET(n, SN74HC595_SPI_OPERATION(n), 0),			\
 		.reset_gpio = COND_CODE_1(DT_INST_NODE_HAS_PROP(n, reset_gpios),	\
 				(&sn74hc595_##n##_reset_gpio),								\
 				(NULL)														\
