@@ -395,7 +395,7 @@ static inline void _spi_context_cs_control(struct spi_context *ctx,
 {
 	if (ctx->config && spi_cs_is_gpio(ctx->config)) {
 		if (on) {
-			gpio_pin_set_dt(&ctx->config->cs.gpio, 1);
+			gpio_pin_set_dt(&ctx->config->cs.gpio, ctx->config->operation & SPI_CS_ACTIVE_HIGH ? 0 : 1);
 			k_busy_wait(ctx->config->cs.delay);
 		} else {
 			if (!force_off &&
@@ -404,7 +404,7 @@ static inline void _spi_context_cs_control(struct spi_context *ctx,
 			}
 
 			k_busy_wait(ctx->config->cs.delay);
-			gpio_pin_set_dt(&ctx->config->cs.gpio, 0);
+			gpio_pin_set_dt(&ctx->config->cs.gpio, ctx->config->operation & SPI_CS_ACTIVE_HIGH ? 1 : 0);
 		}
 	}
 }
