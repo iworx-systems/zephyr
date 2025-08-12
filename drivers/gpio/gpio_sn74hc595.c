@@ -210,18 +210,18 @@ static int gpio_sn74hc595_init(const struct device *dev)
 	return ret;
 }
 
-#define SN74HC595_SPI_OPERATION                                                                    \
-	((uint16_t)(SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8)))
+#define SN74HC595_SPI_OPERATION(n)											\
+	((uint16_t)(SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8)		\
+			   IF_ENABLED(DT_INST_PROP(n, cs_invert), (| SPI_CS_ACTIVE_HIGH))))
 
 #define SN74HC595_INIT(n)                                                                          \
 	static struct gpio_sn74hc595_drv_data sn74hc595_data_##n = {                               \
 		.output = DT_INST_PROP(n, reset_value),                                            \
 		.lock = Z_MUTEX_INITIALIZER(sn74hc595_data_##n.lock),                              \
 	};                                                                                         \
-                                                                                                   \
 	static const struct gpio_sn74hc595_config sn74hc595_config_##n = {                         \
 		.config = GPIO_COMMON_CONFIG_FROM_DT_INST(n),                                      \
-		.bus = SPI_DT_SPEC_INST_GET(n, SN74HC595_SPI_OPERATION),                           \
+		.bus = SPI_DT_SPEC_INST_GET(n, SN74HC595_SPI_OPERATION(n)),                           \
 		.reset_gpio = GPIO_DT_SPEC_INST_GET_OR(n, reset_gpios, {0}),                       \
 		.enable_gpio = GPIO_DT_SPEC_INST_GET_OR(n, enable_gpios, {0}),                     \
 		.num_registers = DT_INST_PROP(n, ngpios) / BITS_PER_BYTE,                          \
