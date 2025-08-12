@@ -106,6 +106,8 @@ source "drivers/pwm/Kconfig.mcux_ctimer"
 
 source "drivers/pwm/Kconfig.numaker"
 
+source "drivers/pwm/Kconfig.numaker_basic"
+
 source "drivers/pwm/Kconfig.nxp_s32_emios"
 
 source "drivers/pwm/Kconfig.nxp_flexio"
