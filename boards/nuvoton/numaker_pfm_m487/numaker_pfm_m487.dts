@@ -94,3 +94,9 @@
 	pinctrl-0 = <&uart0_default>;
 	pinctrl-names = "default";
 };
+
+&usbd{
+	status = "disbaled";
+	pinctrl-0 = <&usbd_default>;
+	pinctrl-names = "default";
+};
