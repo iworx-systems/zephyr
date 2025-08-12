@@ -277,6 +277,30 @@
 			status = "disabled";
 		};
 
+		bpwm0: bpwm@4005a000 {
+			compatible = "nuvoton,numaker-bpwm";
+			reg = <0x4005a000 0x1000>;
+			interrupts = <78 0>;
+			interrupt-names = "bpwm0";
+			resets = <&rst NUMAKER_BPWM0_RST>;
+			prescaler = <19>;
+			clocks = <&pcc NUMAKER_BPWM0_MODULE NUMAKER_CLK_CLKSEL2_BPWM0SEL_PCLK0 0>;
+			#pwm-cells = <3>;
+			status = "disabled";
+		};
+
+		bpwm1: bpwm@4005b000 {
+			compatible = "nuvoton,numaker-bpwm";
+			reg = <0x4005b000 0x1000>;
+			interrupts = <79 0>;
+			interrupt-names = "bpwm1";
+			resets = <&rst NUMAKER_BPWM1_RST>;
+			prescaler = <19>;
+			clocks = <&pcc NUMAKER_BPWM1_MODULE NUMAKER_CLK_CLKSEL2_BPWM1SEL_PCLK1 0>;
+			#pwm-cells = <3>;
+			status = "disabled";
+		};
+
 		epwm0: epwm@40058000 {
 			compatible = "nuvoton,numaker-pwm";
 			reg = <0x40058000 0x37c>;

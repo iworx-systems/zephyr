@@ -47,6 +47,10 @@ menu "Nuvoton NuMaker drivers"
 		bool "NuMaker SPI"
 		help
 		  Enable Nuvoton SPI HAL module driver
+	config HAS_NUMAKER_BPWM
+		bool "NuMaker BPWM"
+		help
+		  Enable Nuvoton BPWM HAL module driver
 	config HAS_NUMAKER_PWM
 		bool "NuMaker PWM"
 		help
