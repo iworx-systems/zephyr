@@ -53,6 +53,17 @@ properties:
       only controlling up to 32 pins, the maximum number you can indicate here
       is 32, equating to four chained shift registers.
 
+  cs-invert:
+    type: boolean
+    description: |
+      If the chip select connected to the "RCLK" pin on the 
+      shift register has an inverter between it and the 
+      microcontroller, this can be set to invert the chip 
+      select polarity. This is useful in cases where you are
+      using the shift register across an isolation barrier for
+      say configurating GPIO on an SPI ADC and you do not want
+      to add an extra isolated gpio for the chip select.
+
   "#gpio-cells":
     const: 2
 
