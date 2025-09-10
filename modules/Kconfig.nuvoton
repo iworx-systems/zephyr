@@ -17,6 +17,9 @@ config HAS_NUMICRO_UART
 	  Enable Nuvoton Universal asynchronous receiver transmitter HAL
 	  module driver
 
+config HAS_NUMICRO_GPIO
+	bool "NuMicro GPIO"
+
 endmenu
 
 config HAS_NUMAKER_HAL
