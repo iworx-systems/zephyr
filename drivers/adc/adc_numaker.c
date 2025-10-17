@@ -140,7 +140,7 @@ static void adc_numaker_isr(const struct device *dev)
 		EADC_STOP_CONV(eadc, module_mask);
 
 		/* Disable sample module A/D ADINT0 interrupt. */
-		EADC_DISABLE_INT(eadc, BIT0);
+		EADC_DISABLE_INT(eadc, BIT(0));
 
 		/* Disable the sample module ADINT0 interrupt source */
 		EADC_DISABLE_SAMPLE_MODULE_INT(eadc, 0, module_mask);
@@ -193,7 +193,7 @@ static void m_adc_numaker_start_scan(const struct device *dev)
 	EADC_CLR_INT_FLAG(eadc, EADC_STATUS2_ADIF0_Msk);
 
 	/* Enable sample module A/D ADINT0 interrupt. */
-	EADC_ENABLE_INT(eadc, BIT0);
+	EADC_ENABLE_INT(eadc, BIT(0));
 
 	/* Enable sample module interrupt ADINT0. */
 	EADC_ENABLE_SAMPLE_MODULE_INT(eadc, 0, module_mask);
