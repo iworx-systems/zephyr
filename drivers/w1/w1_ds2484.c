@@ -126,6 +126,9 @@ static int ds2484_init(const struct device *dev)
 			LOG_ERR("Pin configuration (SLPZ) failed: %d", ret);
 			return ret;
 		}
+
+		// Wait 2ms for device to exit sleep mode
+		k_sleep(K_MSEC(2));
 	}
 
 	if (!device_is_ready(config->i2c_spec.bus)) {
