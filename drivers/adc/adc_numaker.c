@@ -125,9 +125,9 @@ static void adc_numaker_isr(const struct device *dev)
 	uint32_t module_mask = channel_mask;
 	uint32_t module_id;
 	uint16_t conv_data;
-	uint32_t pend_flag;
+	// uint32_t pend_flag;
 
-	LOG_DBG("ADC ISR pend flag: 0x%X\n", pend_flag);
+	// LOG_DBG("ADC ISR pend flag: 0x%X\n", pend_flag);
 	LOG_DBG("ADC ISR STATUS2[0x%x] STATUS3[0x%x]", eadc->STATUS2, eadc->STATUS3);
 	/* Complete the conversion of channels.
 	 * Check EAC idle by EADC_STATUS2_BUSY_Msk
