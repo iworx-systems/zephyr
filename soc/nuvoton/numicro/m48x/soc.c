@@ -14,12 +14,12 @@ void soc_reset_hook(void)
 	/* Unlock protected registers */
 	SYS_UnlockReg();
 
-	/* Disable SPIM cache to relocate 32 KB to SRAM */
+	/* DISABLE SPIM CACHE */
 	CLK->AHBCLK |= CLK_AHBCLK_SPIMCKEN_Msk;
 	SPIM->CTL1 |= SPIM_CTL1_CACHEOFF_Msk;
 	SPIM->CTL1 |= SPIM_CTL1_CCMEN_Msk;
+	while (!(SPIM->CTL1 & SPIM_CTL1_CCMEN_Msk));
 
-	/* system clock init */
 	SystemInit();
 
 	/* Release I/O hold status */
