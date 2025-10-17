@@ -869,6 +869,10 @@ static void numaker_hsusbd_cep_th(const struct device *dev, uint32_t cepintsts)
 
 	/* Data packet received */
 	if (cepintsts & HSUSBD_CEPINTSTS_RXPKIF_Msk) {
+
+		// TODO: For some reason this is needed to get ctrl out packets to work
+		k_busy_wait(1);
+
 		/* Block until next CEP trigger */
 		base->CEPINTEN &= ~HSUSBD_CEPINTEN_RXPKIEN_Msk;
 
