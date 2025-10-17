@@ -1,0 +1,12 @@
+# MAX31856 cold-junction compensated thermocouple-to-digital converter configuration options
+
+# Copyright (c) 2020 Christian Hirsch
+# SPDX-License-Identifier: Apache-2.0
+
+config MAX31856
+	bool "MAX31856 sensor"
+	default y
+	depends on DT_HAS_MAXIM_MAX31856_ENABLED
+	select SPI
+	help
+	  Enable driver for MAX31856 SPI-based Cold-Junction Compensated thermocouple-to-Digital Converter.
