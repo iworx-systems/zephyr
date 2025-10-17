@@ -69,7 +69,13 @@ static int adc_numaker_channel_setup(const struct device *dev,
 		return -ENOTSUP;
 	}
 
-	if (chan_cfg->reference != ADC_REF_INTERNAL) {
+	if (chan_cfg->reference == ADC_REF_EXTERNAL0) {
+		SYS_SetVRef(SYS_VREFCTL_VREF_PIN);
+	}
+	else if ( chan_cfg->reference == ADC_REF_VDD_1){
+		SYS_SetVRef(SYS_VREFCTL_VREF_AVDD);
+	}
+	else if (chan_cfg->reference != ADC_REF_INTERNAL) {
 		LOG_ERR("Not support channel reference");
 		return -ENOTSUP;
 	}
