@@ -373,6 +373,32 @@
 			#size-cells = <0>;
 		};
 
+		eadc0: eadc@40043000 {
+			compatible = "nuvoton,numaker-adc";
+			reg = <0x40043000 0xffc>;
+			interrupts = <42 0>;
+			resets = <&rst NUMAKER_EADC_RST>;
+			clocks = <&pcc NUMAKER_EADC_MODULE
+				  NUMAKER_NA /* HCLK is the only non-configurable clock source */
+				  NUMAKER_CLK_CLKDIV0_EADC(12)>;
+			channels = <16>;
+			status = "disabled";
+			#io-channel-cells = <1>;
+		};
+
+		eadc1: eadc@4004b000 {
+			compatible = "nuvoton,numaker-adc";
+			reg = <0x4004b000 0xffc>;
+			interrupts = <104 0>;
+			resets = <&rst NUMAKER_EADC1_RST>;
+			clocks = <&pcc NUMAKER_EADC1_MODULE
+				  NUMAKER_NA /* HCLK is the only non-configurable clock source */
+				  NUMAKER_CLK_CLKDIV2_EADC1(12)>;
+			channels = <16>;
+			status = "disabled";
+			#io-channel-cells = <1>;
+		};
+
 		usbd: usbd@400c0000 {
 			compatible = "nuvoton,numaker-usbd";
 			reg = <0x400c0000 0x1000>;
