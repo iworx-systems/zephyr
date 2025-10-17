@@ -14,6 +14,10 @@
 #include <zephyr/dt-bindings/i2c/i2c.h>
 
 / {
+	chosen {
+		zephyr,flash-controller = &fmc;
+	};
+	
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -27,12 +31,6 @@
 
 	sram0: memory@20000000 {
 		compatible = "mmio-sram";
-	};
-
-	flash0: flash@0 {
-		compatible = "serial-flash";
-		erase-block-size = <4096>;
-		write-block-size = <1>;
 	};
 
 	sysclk: system-clock {
@@ -56,6 +54,20 @@
 			pcc: peripheral-clock-controller {
 				compatible = "nuvoton,numaker-pcc";
 				#clock-cells = <3>;
+			};
+		};
+
+		fmc: flash-controller@4000c000 {
+			compatible = "nuvoton,numaker-fmc";
+			reg = <0x4000c000 0x110>;
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			flash0: flash@0 {
+				compatible = "soc-nv-flash";
+				reg = <0 DT_SIZE_K(1024)>;
+				erase-block-size = <4096>;
+				write-block-size = <4>;
 			};
 		};
 
