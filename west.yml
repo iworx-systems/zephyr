@@ -23,6 +23,8 @@ manifest:
       url-base: https://github.com/zephyrproject-rtos
     - name: babblesim
       url-base: https://github.com/BabbleSim
+    - name: scottlaboe_public
+      url-base: https://github.com/scottlaboe
 
   group-filter: [-babblesim, -optional]
 
@@ -198,7 +200,8 @@ manifest:
       groups:
         - hal
     - name: hal_nuvoton
-      revision: 466c3eed9c98453fb23953bf0e0427fea01924be
+      remote: scottlaboe_public
+      revision: master
       path: modules/hal/nuvoton
       groups:
         - hal
