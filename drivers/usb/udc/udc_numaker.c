@@ -847,8 +847,8 @@ static void numaker_hsusbd_cep_th(const struct device *dev, uint32_t cepintsts)
 
 	/* Setup token */
 	if (cepintsts & HSUSBD_CEPINTSTS_SETUPTKIF_Msk) {
-		/* Flush CEP FIFO */
-		base->CEPCTL = HSUSBD_CEPCTL_FLUSH | HSUSBD_CEPCTL_NAKCLR_Msk;
+		/* Clear NAK */
+		base->CEPCTL = HSUSBD_CEPCTL_NAKCLR_Msk;
 	}
 
 	/* Setup packet */
@@ -869,9 +869,6 @@ static void numaker_hsusbd_cep_th(const struct device *dev, uint32_t cepintsts)
 
 	/* Data packet received */
 	if (cepintsts & HSUSBD_CEPINTSTS_RXPKIF_Msk) {
-
-		// TODO: For some reason this is needed to get ctrl out packets to work
-		k_busy_wait(1);
 
 		/* Block until next CEP trigger */
 		base->CEPINTEN &= ~HSUSBD_CEPINTEN_RXPKIEN_Msk;
@@ -1091,6 +1088,9 @@ static int numaker_xusbd_ep_copy_to_user(struct numaker_xusbd_ep *ep_cur, uint8_
 			*usrbuf_pos++ = base->CEPDAT_BYTE;
 			rmn--;
 		}
+
+		// Flush anything remaining
+		base->CEPCTL |= HSUSBD_CEPCTL_FLUSH;
 
 		*size_p -= rmn;
 	} else {
