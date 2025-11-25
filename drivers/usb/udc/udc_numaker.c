@@ -1128,6 +1128,9 @@ static int numaker_hsusbd_ep_copy_to_user(struct numaker_usbd_ep *ep_cur, uint8_
 			rmn--;
 		}
 
+		// Flush anything remaining
+		base->CEPCTL |= HSUSBD_CEPCTL_FLUSH;
+
 		*size -= rmn;
 	} else {
 #if defined(CONFIG_UDC_NUMAKER_DMA)
@@ -1148,7 +1151,6 @@ static int numaker_hsusbd_ep_copy_to_user(struct numaker_usbd_ep *ep_cur, uint8_
 		*size -= rmn;
 #endif
 	}
-
 	return 0;
 }
 
@@ -1174,6 +1176,9 @@ static int numaker_hsusbd_ep_copy_from_user(struct numaker_usbd_ep *ep_cur, cons
 			base->CEPDAT_BYTE = *usrbuf_pos++;
 			rmn--;
 		}
+
+		// Flush anything remaining
+		base->CEPCTL |= HSUSBD_CEPCTL_FLUSH;
 
 		*size -= rmn;
 	} else {
