@@ -109,6 +109,13 @@ static int gpio_numicro_configure(const struct device *dev,
 	regs->PUSEL = (regs->PUSEL & ~PUSEL_MASK(pin)) |
 		      (bias << PUSEL_PIN_SHIFT(pin));
 
+	/* Set Init Level 0:low 1:high */
+	if ((flags & GPIO_OUTPUT_INIT_HIGH) != 0) {
+		regs->DOUT |= BIT(pin);
+	} else if ((flags & GPIO_OUTPUT_INIT_LOW) != 0) {
+		regs->DOUT &= ~BIT(pin);
+	}
+
 	return 0;
 }
 
