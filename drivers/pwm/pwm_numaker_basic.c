@@ -103,7 +103,7 @@ static int pwm_numaker_basic_set_cycles(const struct device *dev, uint32_t chann
 
 	/* Set BPWM channel & output configuration */
 	BPWM_ConfigOutputChannel(bpwm, channel, data->cycles_per_sec / period_cycles,
-				 (100U * pulse_cycles) / period_cycles);
+				 (10000U * pulse_cycles) / period_cycles);
 
 	/* Enable BPWM Output path for BPWM channel */
 	BPWM_EnableOutput(bpwm, channel_mask);

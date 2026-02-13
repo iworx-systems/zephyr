@@ -104,7 +104,7 @@ static int pwm_numaker_set_cycles(const struct device *dev, uint32_t channel,
 
 	/* Set EPWM channel & output configuration */
 	EPWM_ConfigOutputChannel(epwm, channel, data->cycles_per_sec / period_cycles,
-				 (100U * pulse_cycles) / period_cycles);
+				 (10000U * pulse_cycles) / period_cycles);
 
 	/* Enable EPWM Output path for EPWM channel */
 	EPWM_EnableOutput(epwm, channel_mask);
