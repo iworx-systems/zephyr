@@ -90,4 +90,8 @@ menu "Nuvoton NuMaker drivers"
 		bool "NuMaker Timer"
 		help
 		  Enable Nuvoton Timer HAL module driver
+	config HAS_NUMAKER_PDMA
+		bool "NuMaker PDMA"
+		help
+		  Enable Nuvoton PDMA HAL module driver
 endmenu
