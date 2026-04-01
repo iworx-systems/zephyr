@@ -13,6 +13,7 @@
 #include <zephyr/drivers/clock_control/clock_control_numaker.h>
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/drivers/spi/rtio.h>
+#include <zephyr/drivers/dma.h>
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(spi_numaker, CONFIG_SPI_LOG_LEVEL);
@@ -21,6 +22,9 @@ LOG_MODULE_REGISTER(spi_numaker, CONFIG_SPI_LOG_LEVEL);
 #include <NuMicro.h>
 
 #define SPI_NUMAKER_TX_NOP 0x00
+#define SPI_NUMAKER_DMA_TIMEOUT_MS 1000
+#define SPI_NUMAKER_DMA_TX_DONE BIT(0)
+#define SPI_NUMAKER_DMA_RX_DONE BIT(1)
 #define SPI_NUMAKER_CTL_MSK (SPI_CTL_DWIDTH_Msk | SPI_CTL_SLAVE_Msk | \
 			     SPI_CTL_CLKPOL_Msk | SPI_CTL_RXNEG_Msk | \
 			     SPI_CTL_TXNEG_Msk)
@@ -28,6 +32,7 @@ LOG_MODULE_REGISTER(spi_numaker, CONFIG_SPI_LOG_LEVEL);
 struct spi_numaker_config {
 	SPI_T *spi;
 	bool is_qspi;
+	bool dma_enabled;
 	const struct reset_dt_spec reset;
 	/* clock configuration */
 	uint32_t clk_modidx;
@@ -35,10 +40,24 @@ struct spi_numaker_config {
 	uint32_t clk_div;
 	const struct device *clk_dev;
 	const struct pinctrl_dev_config *pincfg;
+#ifdef CONFIG_SPI_NUMAKER_DMA
+	const struct device *dma_dev;
+	uint32_t tx_dma_channel;
+	uint32_t tx_dma_slot;
+	uint32_t rx_dma_channel;
+	uint32_t rx_dma_slot;
+#endif
 };
 
 struct spi_numaker_data {
 	struct spi_context ctx;
+#ifdef CONFIG_SPI_NUMAKER_DMA
+	struct k_sem dma_sync;
+	uint8_t dma_done;
+	int dma_status;
+	uint32_t dma_dummy_tx;
+	uint32_t dma_dummy_rx;
+#endif
 };
 
 /*
@@ -201,6 +220,195 @@ static bool spi_numaker_remain_words(struct spi_numaker_data *data)
 	return spi_context_tx_on(&data->ctx) || spi_context_rx_on(&data->ctx);
 }
 
+#ifdef CONFIG_SPI_NUMAKER_DMA
+static bool spi_numaker_use_dma(const struct device *dev, uint8_t spi_dfs)
+{
+	const struct spi_numaker_config *dev_cfg = dev->config;
+
+	/* 24-bit frame width is not natively handled in PDMA path. */
+	return dev_cfg->dma_enabled && (spi_dfs != 3U);
+}
+
+static void spi_numaker_dma_cb(const struct device *dma_dev, void *arg, uint32_t channel, int status)
+{
+	const struct device *dev = arg;
+	const struct spi_numaker_config *dev_cfg = dev->config;
+	struct spi_numaker_data *data = dev->data;
+
+	ARG_UNUSED(dma_dev);
+
+	if (status < 0) {
+		LOG_ERR("DMA callback error status=%d channel=%u", status, channel);
+		data->dma_status = status;
+		k_sem_give(&data->dma_sync);
+		return;
+	}
+
+	if (channel == dev_cfg->tx_dma_channel) {
+		LOG_DBG("DMA TX complete");
+		data->dma_done |= SPI_NUMAKER_DMA_TX_DONE;
+	} else if (channel == dev_cfg->rx_dma_channel) {
+		LOG_DBG("DMA RX complete");
+		data->dma_done |= SPI_NUMAKER_DMA_RX_DONE;
+	} else {
+		LOG_ERR("DMA callback unknown channel=%u", channel);
+		data->dma_status = -EIO;
+	}
+
+	k_sem_give(&data->dma_sync);
+}
+
+static int spi_numaker_dma_config(const struct device *dev, uint32_t channel, uint32_t slot,
+				  enum dma_channel_direction direction, uint32_t src_addr,
+				  uint32_t dst_addr, uint32_t size, uint8_t spi_dfs,
+				  uint32_t src_adj, uint32_t dst_adj)
+{
+	const struct spi_numaker_config *dev_cfg = dev->config;
+	struct dma_config dma_cfg = { 0 };
+	struct dma_block_config blk_cfg = { 0 };
+
+	dma_cfg.channel_direction = direction;
+	dma_cfg.source_data_size = spi_dfs;
+	dma_cfg.dest_data_size = spi_dfs;
+	dma_cfg.source_burst_length = 1U;
+	dma_cfg.dest_burst_length = 1U;
+	/* SPI peripheral requests should use single-request handshake mode. */
+	dma_cfg.source_handshake = (direction == PERIPHERAL_TO_MEMORY) ? 1U : 0U;
+	dma_cfg.dest_handshake = (direction == MEMORY_TO_PERIPHERAL) ? 1U : 0U;
+	dma_cfg.dma_slot = slot;
+	dma_cfg.dma_callback = spi_numaker_dma_cb;
+	dma_cfg.user_data = (void *)dev;
+	dma_cfg.complete_callback_en = 1U;
+	dma_cfg.error_callback_dis = 0U;
+	dma_cfg.block_count = 1U;
+	dma_cfg.head_block = &blk_cfg;
+
+	blk_cfg.block_size = size;
+	blk_cfg.source_address = src_addr;
+	blk_cfg.dest_address = dst_addr;
+	blk_cfg.source_addr_adj = src_adj;
+	blk_cfg.dest_addr_adj = dst_adj;
+
+	return dma_config(dev_cfg->dma_dev, channel, &dma_cfg);
+}
+
+static int spi_numaker_txrx_dma(const struct device *dev, uint8_t spi_dfs)
+{
+	struct spi_numaker_data *data = dev->data;
+	const struct spi_numaker_config *dev_cfg = dev->config;
+	struct spi_context *ctx = &data->ctx;
+	int ret;
+	uint32_t time_out_cnt;
+
+	LOG_DBG("DMA: spi_dfs=%d, rx_enabled=%d, tx_enabled=%d", spi_dfs,
+		spi_context_rx_buf_on(ctx), spi_context_tx_buf_on(ctx));
+
+	SPI_DISABLE_RX_PDMA(dev_cfg->spi);
+	SPI_DISABLE_TX_PDMA(dev_cfg->spi);
+	dev_cfg->spi->PDMACTL |= SPI_PDMACTL_PDMARST_Msk;
+	SPI_ClearRxFIFO(dev_cfg->spi);
+	SPI_ClearTxFIFO(dev_cfg->spi);
+
+	while (spi_numaker_remain_words(data)) {
+		size_t chunk_frames = spi_context_max_continuous_chunk(ctx);
+		size_t chunk_bytes = chunk_frames * spi_dfs;
+		uint32_t tx_addr;
+		uint32_t rx_addr;
+
+		if (chunk_frames == 0U) {
+			return -EINVAL;
+		}
+
+		tx_addr = spi_context_tx_buf_on(ctx) ? (uint32_t)(uintptr_t)ctx->tx_buf :
+			(uint32_t)(uintptr_t)&data->dma_dummy_tx;
+		rx_addr = spi_context_rx_buf_on(ctx) ? (uint32_t)(uintptr_t)ctx->rx_buf :
+			(uint32_t)(uintptr_t)&data->dma_dummy_rx;
+
+		LOG_DBG("DMA: chunk_frames=%zu chunk_bytes=%zu tx_addr=0x%x rx_addr=0x%x tx_use_real=%d rx_use_real=%d",
+			chunk_frames, chunk_bytes, tx_addr, rx_addr,
+			spi_context_tx_buf_on(ctx), spi_context_rx_buf_on(ctx));
+
+		ret = spi_numaker_dma_config(dev, dev_cfg->tx_dma_channel, dev_cfg->tx_dma_slot,
+					     MEMORY_TO_PERIPHERAL, tx_addr,
+					     (uint32_t)(uintptr_t)&dev_cfg->spi->TX,
+					     chunk_bytes, spi_dfs,
+					     spi_context_tx_buf_on(ctx) ? DMA_ADDR_ADJ_INCREMENT :
+					     DMA_ADDR_ADJ_NO_CHANGE,
+					     DMA_ADDR_ADJ_NO_CHANGE);
+		if (ret < 0) {
+			return ret;
+		}
+
+		ret = spi_numaker_dma_config(dev, dev_cfg->rx_dma_channel, dev_cfg->rx_dma_slot,
+					     PERIPHERAL_TO_MEMORY,
+					     (uint32_t)(uintptr_t)&dev_cfg->spi->RX,
+					     rx_addr, chunk_bytes, spi_dfs,
+					     DMA_ADDR_ADJ_NO_CHANGE,
+					     spi_context_rx_buf_on(ctx) ? DMA_ADDR_ADJ_INCREMENT :
+					     DMA_ADDR_ADJ_NO_CHANGE);
+		if (ret < 0) {
+			return ret;
+		}
+
+		data->dma_done = 0U;
+		data->dma_status = 0;
+		k_sem_reset(&data->dma_sync);
+
+		ret = dma_start(dev_cfg->dma_dev, dev_cfg->rx_dma_channel);
+		if (ret < 0) {
+			return ret;
+		}
+
+		ret = dma_start(dev_cfg->dma_dev, dev_cfg->tx_dma_channel);
+		if (ret < 0) {
+			(void)dma_stop(dev_cfg->dma_dev, dev_cfg->rx_dma_channel);
+			return ret;
+		}
+
+		SPI_TRIGGER_RX_PDMA(dev_cfg->spi);
+		SPI_TRIGGER_TX_PDMA(dev_cfg->spi);
+
+		while ((data->dma_done != (SPI_NUMAKER_DMA_TX_DONE | SPI_NUMAKER_DMA_RX_DONE)) &&
+		       (data->dma_status == 0)) {
+			ret = k_sem_take(&data->dma_sync, K_MSEC(SPI_NUMAKER_DMA_TIMEOUT_MS));
+			if (ret < 0) {
+				LOG_ERR("SPI DMA timeout: done=0x%x status=%d",
+					data->dma_done, data->dma_status);
+				data->dma_status = -ETIMEDOUT;
+				break;
+			}
+		}
+
+		SPI_DISABLE_RX_PDMA(dev_cfg->spi);
+		SPI_DISABLE_TX_PDMA(dev_cfg->spi);
+		dev_cfg->spi->PDMACTL |= SPI_PDMACTL_PDMARST_Msk;
+		(void)dma_stop(dev_cfg->dma_dev, dev_cfg->tx_dma_channel);
+		(void)dma_stop(dev_cfg->dma_dev, dev_cfg->rx_dma_channel);
+
+		time_out_cnt = SystemCoreClock;
+		while (SPI_IS_BUSY(dev_cfg->spi)) {
+			if (--time_out_cnt == 0U) {
+				return -EIO;
+			}
+		}
+
+		if (data->dma_status < 0) {
+			SPI_ClearRxFIFO(dev_cfg->spi);
+			SPI_ClearTxFIFO(dev_cfg->spi);
+			return data->dma_status;
+		}
+
+		spi_context_update_tx(ctx, spi_dfs, chunk_frames);
+		spi_context_update_rx(ctx, spi_dfs, chunk_frames);
+	}
+
+	SPI_ClearRxFIFO(dev_cfg->spi);
+	SPI_ClearTxFIFO(dev_cfg->spi);
+
+	return 0;
+}
+#endif
+
 static int spi_numaker_transceive(const struct device *dev, const struct spi_config *config,
 				  const struct spi_buf_set *tx_bufs,
 				  const struct spi_buf_set *rx_bufs)
@@ -251,12 +459,21 @@ static int spi_numaker_transceive(const struct device *dev, const struct spi_con
 	spi_context_cs_control(&data->ctx, true);
 
 	/* transceive tx/rx data */
-	do {
-		ret = spi_numaker_txrx(dev, spi_dfs);
-		if (ret < 0) {
-			break;
-		}
-	} while (spi_numaker_remain_words(data));
+	#ifdef CONFIG_SPI_NUMAKER_DMA
+	if (spi_numaker_use_dma(dev, spi_dfs)) {
+		LOG_DBG("Using DMA path");
+		ret = spi_numaker_txrx_dma(dev, spi_dfs);
+	} else
+	#endif
+	{
+		LOG_DBG("Using polling path");
+		do {
+			ret = spi_numaker_txrx(dev, spi_dfs);
+			if (ret < 0) {
+				break;
+			}
+		} while (spi_numaker_remain_words(data));
+	}
 
 	/* if cs is defined: software cs control, set active false */
 	spi_context_cs_control(&data->ctx, false);
@@ -327,6 +544,20 @@ static int spi_numaker_init(const struct device *dev)
 		goto done;
 	}
 
+#ifdef CONFIG_SPI_NUMAKER_DMA
+	if (dev_cfg->dma_enabled) {
+		if (!device_is_ready(dev_cfg->dma_dev)) {
+			LOG_ERR("dma controller device is not ready");
+			err = -ENODEV;
+			goto done;
+		}
+
+		k_sem_init(&data->dma_sync, 0, 2);
+		data->dma_dummy_tx = SPI_NUMAKER_TX_NOP;
+		data->dma_dummy_rx = 0U;
+	}
+#endif
+
 	spi_context_unlock_unconditionally(&data->ctx);
 
 	/* Reset this module, same as BSP's SYS_ResetModule(id_rst) */
@@ -353,12 +584,25 @@ done:
 	static struct spi_numaker_config spi_numaker_config_##inst = {                             \
 		.spi = (SPI_T *)DT_INST_REG_ADDR(inst),                                            \
 		.is_qspi = DT_INST_NODE_HAS_PROP(inst, qspi),                                      \
+		.dma_enabled = DT_INST_DMAS_HAS_NAME(inst, tx) && DT_INST_DMAS_HAS_NAME(inst, rx),\
 		.reset = RESET_DT_SPEC_INST_GET(inst),                                             \
 		.clk_modidx = DT_INST_CLOCKS_CELL(inst, clock_module_index),                       \
 		.clk_src = DT_INST_CLOCKS_CELL(inst, clock_source),                                \
 		.clk_div = DT_INST_CLOCKS_CELL(inst, clock_divider),                               \
 		.clk_dev = DEVICE_DT_GET(DT_PARENT(DT_INST_CLOCKS_CTLR(inst))),                    \
 		.pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(inst),                                    \
+		IF_ENABLED(CONFIG_SPI_NUMAKER_DMA, (                                               \
+			.dma_dev = COND_CODE_1(DT_INST_DMAS_HAS_NAME(inst, tx),                      \
+				(DEVICE_DT_GET(DT_INST_DMAS_CTLR_BY_NAME(inst, tx))), (NULL)),        \
+			.tx_dma_channel = COND_CODE_1(DT_INST_DMAS_HAS_NAME(inst, tx),               \
+				(DT_INST_DMAS_CELL_BY_NAME(inst, tx, channel)), (0)),                \
+			.tx_dma_slot = COND_CODE_1(DT_INST_DMAS_HAS_NAME(inst, tx),                  \
+				(DT_INST_DMAS_CELL_BY_NAME(inst, tx, slot)), (0)),                   \
+			.rx_dma_channel = COND_CODE_1(DT_INST_DMAS_HAS_NAME(inst, rx),               \
+				(DT_INST_DMAS_CELL_BY_NAME(inst, rx, channel)), (0)),                \
+			.rx_dma_slot = COND_CODE_1(DT_INST_DMAS_HAS_NAME(inst, rx),                  \
+				(DT_INST_DMAS_CELL_BY_NAME(inst, rx, slot)), (0)),                   \
+		))                                                                                 \
 	};                                                                                         \
 	SPI_DEVICE_DT_INST_DEFINE(inst, spi_numaker_init, NULL, &spi_numaker_data_##inst,          \
 			      &spi_numaker_config_##inst, POST_KERNEL, CONFIG_SPI_INIT_PRIORITY,   \

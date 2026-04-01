@@ -19,3 +19,11 @@ properties:
 
   clocks:
     required: true
+
+  dmas:
+    required: false
+    description: DMA specifiers for SPI transfers, ordered as TX and RX.
+
+  dma-names:
+    required: false
+    description: DMA channel names. Must be "tx", "rx" when present.

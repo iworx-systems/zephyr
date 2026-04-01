@@ -13,3 +13,10 @@ config SPI_NUMAKER
 	  This option enables the SPI driver for Nuvoton NuMaker family of
 	  processors.
 	  Say y if you wish to enable NuMaker SPI.
+
+config SPI_NUMAKER_DMA
+	bool "Enable DMA support for Nuvoton NuMaker SPI driver"
+	depends on SPI_NUMAKER && DMA
+	help
+	  Enable DMA-backed SPI transfers when both `tx` and `rx` DMA channels
+	  are provided in devicetree for the SPI controller.
