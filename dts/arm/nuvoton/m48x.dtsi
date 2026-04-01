@@ -71,6 +71,18 @@
 			};
 		};
 
+		pdma: dma@40008000 {
+			compatible = "nuvoton,numaker-pdma";
+			reg = <0x40008000 0x1000>;
+			interrupts = <40 0>;
+			resets = <&rst NUMAKER_PDMA_RST>;
+			clocks = <&pcc NUMAKER_PDMA_MODULE NUMAKER_MODULE_NoMsk NUMAKER_MODULE_NoMsk>;
+			dma-channels = <16>;
+			dma-requests = <71>;
+			#dma-cells = <2>;
+			status = "okay";
+		};
+
 		pinctrl: pinctrl@40000030 {
 			compatible = "nuvoton,numicro-pinctrl";
 			reg = <0x40000030 0x40

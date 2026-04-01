@@ -1,0 +1,10 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: Apache-2.0
+
+config DMA_NUMAKER_PDMA
+	bool "Nuvoton NuMaker PDMA driver"
+	default y
+	select HAS_NUMAKER_PDMA
+	depends on DT_HAS_NUVOTON_NUMAKER_PDMA_ENABLED
+	help
+	  Enable PDMA driver for Nuvoton NuMicro M480 series devices.

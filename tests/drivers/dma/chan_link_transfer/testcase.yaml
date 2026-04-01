@@ -21,7 +21,9 @@ tests:
       - lpcxpresso55s36
       - native_sim
       - native_sim/native/64
+      - numaker_pfm_m487
     integration_platforms:
       - frdm_k64f
       - native_sim
       - native_sim/native/64
+      - numaker_pfm_m487
