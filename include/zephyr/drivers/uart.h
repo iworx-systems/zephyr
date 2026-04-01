@@ -985,4 +985,36 @@ __syscall int uart_drv_cmd(const struct device *dev, uint32_t cmd, uint32_t p);
 #include <zephyr/drivers/uart/uart_internal.h>
 #include <zephyr/syscalls/uart.h>
 
+#ifdef CONFIG_UART_RTIO
+
+#include <zephyr/rtio/rtio.h>
+
+/**
+ * @brief Submit a UART device with an RTIO request
+ *
+ * @param iodev_sqe Prepared submission queue entry connected to an iodev
+ *                  defined by UART_DT_IODEV_DEFINE.
+ */
+static inline void uart_iodev_submit(struct rtio_iodev_sqe *iodev_sqe)
+{
+	const struct device *dev = (const struct device *)iodev_sqe->sqe.iodev->data;
+	const struct uart_driver_api *api = (const struct uart_driver_api *)dev->api;
+
+	api->iodev_submit(dev, iodev_sqe);
+}
+
+extern const struct rtio_iodev_api uart_iodev_api;
+
+/**
+ * @brief Define an RTIO iodev for a UART device tree node
+ *
+ * @param name Symbolic name to use for defining the iodev
+ * @param node_id Devicetree node identifier for the UART device
+ */
+#define UART_DT_IODEV_DEFINE(name, node_id)				\
+	RTIO_IODEV_DEFINE(name, &uart_iodev_api,			\
+			  (void *)DEVICE_DT_GET(node_id))
+
+#endif /* CONFIG_UART_RTIO */
+
 #endif /* ZEPHYR_INCLUDE_DRIVERS_UART_H_ */

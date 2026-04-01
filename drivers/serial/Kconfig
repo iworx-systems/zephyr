@@ -116,6 +116,25 @@ config UART_WIDE_DATA
 	  This is up to the driver to implement the necessary functions
 	  to properly support this.
 
+config UART_RTIO
+	bool "RTIO support [EXPERIMENTAL]"
+	select EXPERIMENTAL
+	select RTIO
+	select RTIO_WORKQ
+	depends on UART_ASYNC_API
+	help
+	  This enables RTIO API support for UART. Uses the async
+	  API underneath to perform DMA-backed transfers via the
+	  RTIO submission/completion queue model.
+
+config UART_RTIO_FALLBACK_MSGS
+	int "Number of RTIO fallback messages"
+	default 4
+	depends on UART_RTIO
+	help
+	  The number of RTIO messages reserved for fallback slow path
+	  operations in the UART RTIO default implementation.
+
 config UART_PIPE
 	bool "Pipe UART driver"
 	select UART_INTERRUPT_DRIVEN

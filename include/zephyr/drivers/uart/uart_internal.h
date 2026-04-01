@@ -18,6 +18,10 @@
 
 #include <zephyr/device.h>
 
+#ifdef CONFIG_UART_RTIO
+struct rtio_iodev_sqe;
+#endif
+
 /**
  * @cond INTERNAL_HIDDEN
  *
@@ -128,6 +132,11 @@ __subsystem struct uart_driver_api {
 	void (*irq_callback_set)(const struct device *dev, uart_irq_callback_user_data_t cb,
 				 void *user_data);
 
+#endif
+
+#ifdef CONFIG_UART_RTIO
+	void (*iodev_submit)(const struct device *dev,
+			     struct rtio_iodev_sqe *iodev_sqe);
 #endif
 
 #ifdef CONFIG_UART_LINE_CTRL
