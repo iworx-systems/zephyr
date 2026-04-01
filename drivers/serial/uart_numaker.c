@@ -17,6 +17,9 @@
 #ifdef CONFIG_UART_ASYNC_API
 #include <zephyr/drivers/dma.h>
 #endif
+#ifdef CONFIG_UART_RTIO
+#include <zephyr/drivers/uart/rtio.h>
+#endif
 #include <NuMicro.h>
 
 LOG_MODULE_REGISTER(numaker_uart, LOG_LEVEL_ERR);
@@ -934,6 +937,9 @@ static DEVICE_API(uart, uart_numaker_driver_api) = {
 	.rx_enable = uart_numaker_rx_enable,
 	.rx_buf_rsp = uart_numaker_rx_buf_rsp,
 	.rx_disable = uart_numaker_rx_disable,
+#endif
+#ifdef CONFIG_UART_RTIO
+	.iodev_submit = uart_rtio_iodev_default_submit,
 #endif
 };
 
