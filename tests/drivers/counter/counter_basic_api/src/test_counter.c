@@ -135,6 +135,9 @@ static const struct device *const devices[] = {
 #ifdef CONFIG_COUNTER_TIMER_GD32
 	DEVS_FOR_DT_COMPAT(gd_gd32_timer)
 #endif
+#ifdef CONFIG_COUNTER_TIMER_NUMAKER
+	DEVS_FOR_DT_COMPAT(nuvoton_numaker_timer)
+#endif
 #ifdef CONFIG_COUNTER_TIMER_RPI_PICO
 	DEVS_FOR_DT_COMPAT(raspberrypi_pico_timer)
 #endif

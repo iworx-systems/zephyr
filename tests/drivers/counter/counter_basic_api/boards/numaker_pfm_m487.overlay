@@ -1,0 +1,9 @@
+/*
+ * Copyright (c) 2025 iWorx Systems Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+&timer2 {
+	status = "okay";
+};

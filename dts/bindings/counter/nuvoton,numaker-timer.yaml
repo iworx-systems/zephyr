@@ -1,0 +1,66 @@
+# Copyright (c) 2025 iWorx Systems Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+description: Nuvoton NuMaker Timer Counter
+
+compatible: "nuvoton,numaker-timer"
+
+include: [base.yaml, reset-device.yaml, pinctrl-device.yaml]
+
+properties:
+  reg:
+    required: true
+
+  interrupts:
+    required: true
+
+  resets:
+    required: true
+
+  clocks:
+    required: true
+
+  prescaler:
+    type: int
+    default: 0
+    description: |
+      Timer prescaler value (0-255). The timer input clock is divided
+      by (prescaler + 1).
+
+  count-edge:
+    type: string
+    enum:
+      - "rising"
+      - "falling"
+    description: |
+      Selects which edge of the TMx input signal increments the counter.
+      Setting this property enables event counter mode — the timer counts
+      external edges on the TMx pin instead of an internal clock.
+
+  output-clk:
+    type: boolean
+    description: |
+      Enable toggle output mode on the TMx pin. When set, the timer
+      toggles the TMx output pin each time the counter matches the
+      compare value.
+
+  trigger-pdma:
+    type: boolean
+    description: |
+      Enable PDMA trigger output.  When set, the timer generates DMA
+      transfer requests to the PDMA controller on each selected event.
+      The PDMA channel must be configured separately with the
+      corresponding NUMAKER_PDMA_TMRx request source.
+
+  trigger-source:
+    type: string
+    enum:
+      - "timeout"
+      - "capture"
+    description: |
+      Selects which timer event triggers the PDMA request (only used
+      when trigger-pdma is set):
+      "timeout" - Timeout event (counter matches compare value). Useful
+                  with event counter mode to trigger DMA every N external
+                  pulses.
+      "capture" - Capture event (edge detected on TMx_EXT pin).
