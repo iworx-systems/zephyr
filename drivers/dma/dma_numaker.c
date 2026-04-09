@@ -53,6 +53,8 @@ struct dma_numaker_pdma_channel {
 	uint8_t linked_channel;
 	bool source_chaining_en;
 	bool dest_chaining_en;
+	uint32_t burst_type;
+	uint32_t burst_size;
 };
 
 struct dma_numaker_pdma_data {
@@ -214,9 +216,21 @@ static int dma_numaker_pdma_program(const struct device *dev, uint32_t channel,
 		return -EINVAL;
 	}
 
-	PDMA_SetTransferCnt(cfg->pdma, channel, dma_numaker_pdma_width_cfg(ch_data->transfer_width),
-				trans_count);
-	PDMA_SetTransferAddr(cfg->pdma, channel, src, src_ctrl, dst, dst_ctrl);
+	/* Fully reconstruct CTL from stored channel state rather than
+	 * read-modify-write.  After dma_stop the errata 2.9 flush
+	 * clobbers CTL with dummy values; R-M-W would preserve the
+	 * wrong burst_type (REQ_BURST instead of REQ_SINGLE). */
+	cfg->pdma->DSCT[channel].CTL =
+		((trans_count - 1U) << PDMA_DSCT_CTL_TXCNT_Pos) |
+		dma_numaker_pdma_width_cfg(ch_data->transfer_width) |
+		src_ctrl | dst_ctrl |
+		ch_data->burst_type |
+		ch_data->burst_size |
+		(ch_data->complete_callback_en ? PDMA_TBINTDIS_ENABLE
+					       : PDMA_TBINTDIS_DISABLE) |
+		PDMA_OP_BASIC;
+	cfg->pdma->DSCT[channel].SA = src;
+	cfg->pdma->DSCT[channel].DA = dst;
 	PDMA_SetTransferMode(cfg->pdma, channel,
 				(ch_data->direction == MEMORY_TO_MEMORY) ? PDMA_MEM : ch_data->dma_slot,
 				0, 0);
@@ -340,6 +354,8 @@ static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 	ch_data->linked_channel = (uint8_t)dma_cfg->linked_channel;
 	ch_data->source_chaining_en = dma_cfg->source_chaining_en;
 	ch_data->dest_chaining_en = dma_cfg->dest_chaining_en;
+	ch_data->burst_type = burst_type;
+	ch_data->burst_size = burst_size;
 
 	if (ch_data->scatter_enabled) {
 		err = dma_numaker_pdma_setup_scatter(dev, channel, dma_cfg, ch_data, burst_type,
@@ -420,6 +436,10 @@ static int dma_numaker_pdma_start(const struct device *dev, uint32_t channel)
 		return -EINVAL;
 	}
 
+	/* Ensure prior DSCT register writes (from dma_reload) are
+	 * visible before enabling the channel. */
+	__DSB();
+
 	/* Re-enable channel in CHCTL — PDMA_STOP (PAUSE register) clears it */
 	cfg->pdma->CHCTL |= BIT(channel);
 
@@ -432,6 +452,46 @@ static int dma_numaker_pdma_start(const struct device *dev, uint32_t channel)
 	}
 
 	return 0;
+}
+
+/*
+ * M480 Errata 2.9 workaround: run a 1-byte MEM-to-MEM dummy transfer
+ * to reset PDMA internal SA/DA working registers after stopping a
+ * channel.  Without this, the PDMA may retain stale values from the
+ * previous transfer and corrupt data when the channel is restarted.
+ *
+ * Additionally, enabling a channel while another is active can corrupt
+ * the active channel's transfer.  By flushing inside dma_stop (when
+ * the channel is already stopped), the caller is guaranteed that the
+ * channel's internal state is clean before starting any other channel.
+ *
+ * The dummy completes in ~3 bus cycles and is safe to call from ISR.
+ */
+static void dma_numaker_pdma_flush_channel(PDMA_T *pdma, uint32_t channel)
+{
+	static uint8_t dummy_byte;
+
+	/* Lock IRQs to prevent the PDMA ISR from clearing TDSTS
+	 * before our poll loop sees it.  The dummy completes in
+	 * ~3 bus cycles so the critical section is very short. */
+	unsigned int key = irq_lock();
+
+	pdma->DSCT[channel].CTL =
+		PDMA_WIDTH_8 | PDMA_SAR_FIX | PDMA_DAR_FIX |
+		PDMA_BURST_1 | PDMA_REQ_BURST | PDMA_OP_BASIC;
+	pdma->DSCT[channel].SA = (uint32_t)(uintptr_t)&dummy_byte;
+	pdma->DSCT[channel].DA = (uint32_t)(uintptr_t)&dummy_byte;
+	PDMA_SetTransferMode(pdma, channel, PDMA_MEM, 0, 0);
+	pdma->CHCTL |= BIT(channel);
+	PDMA_Trigger(pdma, channel);
+
+	while (!(pdma->TDSTS & BIT(channel))) {
+		/* 1 byte — completes in ~3 bus cycles. */
+	}
+	PDMA_CLR_TD_FLAG(pdma, BIT(channel));
+	PDMA_STOP(pdma, channel);
+
+	irq_unlock(key);
 }
 
 static int dma_numaker_pdma_stop(const struct device *dev, uint32_t channel)
@@ -448,6 +508,9 @@ static int dma_numaker_pdma_stop(const struct device *dev, uint32_t channel)
 	PDMA_CLR_TD_FLAG(cfg->pdma, BIT(channel));
 	PDMA_CLR_ABORT_FLAG(cfg->pdma, BIT(channel));
 	PDMA_CLR_ALIGN_FLAG(cfg->pdma, BIT(channel));
+
+	/* M480 Errata 2.9: flush stale internal PDMA working registers */
+	dma_numaker_pdma_flush_channel(cfg->pdma, channel);
 
 	return 0;
 }
@@ -467,20 +530,25 @@ static int dma_numaker_pdma_get_status(const struct device *dev, uint32_t channe
 
 	status->busy = (PDMA_IS_CH_BUSY(cfg->pdma, channel) != 0U);
 	status->dir = data->channels[channel].direction;
-	status->pending_length = 0U;
 
-	if (status->busy) {
-		if (data->channels[channel].scatter_enabled) {
-			ctl = cfg->pdma->CURSCAT[channel] != 0U ?
-				((DSCT_T *)(uintptr_t)cfg->pdma->CURSCAT[channel])->CTL :
-				cfg->pdma->DSCT[channel].CTL;
-		} else {
-			ctl = cfg->pdma->DSCT[channel].CTL;
-		}
-		status->pending_length =
-			(((ctl & PDMA_DSCT_CTL_TXCNT_Msk) >> PDMA_DSCT_CTL_TXCNT_Pos) + 1U) *
-			data->channels[channel].transfer_width;
+	/*
+	 * Always read TXCNT from the descriptor register, even when the
+	 * channel is not busy.  In PDMA_REQ_SINGLE mode the channel goes
+	 * idle between peripheral triggers but TXCNT retains the
+	 * decremented count from completed transfers.  Reading only when
+	 * busy would report pending_length=0 between triggers, making the
+	 * entire block appear already transferred.
+	 */
+	if (data->channels[channel].scatter_enabled) {
+		ctl = cfg->pdma->CURSCAT[channel] != 0U ?
+			((DSCT_T *)(uintptr_t)cfg->pdma->CURSCAT[channel])->CTL :
+			cfg->pdma->DSCT[channel].CTL;
+	} else {
+		ctl = cfg->pdma->DSCT[channel].CTL;
 	}
+	status->pending_length =
+		(((ctl & PDMA_DSCT_CTL_TXCNT_Msk) >> PDMA_DSCT_CTL_TXCNT_Pos) + 1U) *
+		data->channels[channel].transfer_width;
 
 	return 0;
 }
