@@ -80,7 +80,7 @@
 			dma-channels = <16>;
 			dma-requests = <71>;
 			#dma-cells = <2>;
-			status = "okay";
+			status = "disabled";
 		};
 
 		pinctrl: pinctrl@40000030 {
