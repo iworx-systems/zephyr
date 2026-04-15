@@ -10,6 +10,7 @@
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/drivers/clock_control/clock_control_numaker.h>
 #include <zephyr/drivers/counter.h>
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pinctrl.h>
 #include <zephyr/drivers/reset.h>
 #include <zephyr/irq.h>
@@ -90,7 +91,10 @@ struct counter_numaker_data {
 	void *top_user_data;
 	uint32_t guard_period;
 	uint32_t freq;
+	const struct device *dev;
 	bool pinctrl_applied;
+	bool gpio_mode;
+	struct gpio_callback gpio_cb;
 };
 
 struct counter_numaker_config {
@@ -107,6 +111,7 @@ struct counter_numaker_config {
 	uint8_t trigger_source;
 	bool count_rising;
 	bool trigger_pdma;
+	struct gpio_dt_spec gpio;
 	void (*irq_config)(const struct device *dev);
 };
 
@@ -120,6 +125,8 @@ static inline void tmr_write(const struct counter_numaker_config *cfg, uint32_t 
 {
 	sys_write32(val, (mem_addr_t)cfg->base + offset);
 }
+
+static void counter_numaker_exit_gpio_mode(const struct device *dev);
 
 static int counter_numaker_start(const struct device *dev)
 {
@@ -157,8 +164,16 @@ static int counter_numaker_start(const struct device *dev)
 static int counter_numaker_stop(const struct device *dev)
 {
 	const struct counter_numaker_config *cfg = dev->config;
-	uint32_t ctl = tmr_read(cfg, TMR_CTL);
+	struct counter_numaker_data *data = dev->data;
+	uint32_t ctl;
 
+	/* Exit GPIO interrupt mode if active */
+	if (data->gpio_mode) {
+		counter_numaker_exit_gpio_mode(dev);
+		return 0;
+	}
+
+	ctl = tmr_read(cfg, TMR_CTL);
 	ctl &= ~TMR_CTL_CNTEN;
 	tmr_write(cfg, TMR_CTL, ctl);
 
@@ -218,6 +233,93 @@ static uint32_t counter_numaker_get_pending_int(const struct device *dev)
 	return !!(tmr_read(cfg, TMR_INTSTS) & TMR_INTSTS_TIF);
 }
 
+static void counter_numaker_gpio_cb(const struct device *gpio_dev, struct gpio_callback *cb,
+				     uint32_t pins)
+{
+	struct counter_numaker_data *data =
+		CONTAINER_OF(cb, struct counter_numaker_data, gpio_cb);
+
+	if (data->top_cb) {
+		data->top_cb(data->dev, data->top_user_data);
+	}
+}
+
+/**
+ * Exit GPIO interrupt mode: remove callback, disable interrupt, reconfigure
+ * pin back to timer function via pinctrl.
+ */
+static void counter_numaker_exit_gpio_mode(const struct device *dev)
+{
+	const struct counter_numaker_config *cfg = dev->config;
+	struct counter_numaker_data *data = dev->data;
+
+	if (!data->gpio_mode) {
+		return;
+	}
+
+	gpio_pin_interrupt_configure_dt(&cfg->gpio, GPIO_INT_DISABLE);
+	gpio_remove_callback(cfg->gpio.port, &data->gpio_cb);
+	data->gpio_mode = false;
+
+	/* Re-apply pinctrl to route the pin back to the timer peripheral */
+	if (cfg->pincfg != NULL) {
+		pinctrl_apply_state(cfg->pincfg, PINCTRL_STATE_DEFAULT);
+		data->pinctrl_applied = true;
+	}
+}
+
+/**
+ * Enter GPIO interrupt mode: stop the timer, reconfigure the TMx pin as a
+ * GPIO input with an edge interrupt so the callback fires on every pulse.
+ */
+static int counter_numaker_enter_gpio_mode(const struct device *dev,
+					   const struct counter_top_cfg *top_cfg)
+{
+	const struct counter_numaker_config *cfg = dev->config;
+	struct counter_numaker_data *data = dev->data;
+	int err;
+	gpio_flags_t edge_flag;
+
+	if (!cfg->gpio.port) {
+		return -ENOTSUP;
+	}
+
+	/* Stop timer hardware */
+	uint32_t ctl = tmr_read(cfg, TMR_CTL);
+
+	ctl &= ~(TMR_CTL_CNTEN | TMR_CTL_INTEN);
+	tmr_write(cfg, TMR_CTL, ctl);
+
+	/* Reconfigure pin as GPIO by resetting the MFP to GPIO function.
+	 * gpio_pin_configure will take over the pin from the timer mux.
+	 */
+	edge_flag = cfg->count_rising ? GPIO_INT_EDGE_RISING : GPIO_INT_EDGE_FALLING;
+	err = gpio_pin_configure_dt(&cfg->gpio, GPIO_INPUT);
+	if (err != 0) {
+		return err;
+	}
+
+	data->top_cb = top_cfg->callback;
+	data->top_user_data = top_cfg->user_data;
+
+	gpio_init_callback(&data->gpio_cb, counter_numaker_gpio_cb, BIT(cfg->gpio.pin));
+	err = gpio_add_callback(cfg->gpio.port, &data->gpio_cb);
+	if (err != 0) {
+		return err;
+	}
+
+	err = gpio_pin_interrupt_configure_dt(&cfg->gpio, edge_flag);
+	if (err != 0) {
+		gpio_remove_callback(cfg->gpio.port, &data->gpio_cb);
+		return err;
+	}
+
+	data->gpio_mode = true;
+	data->pinctrl_applied = false;
+
+	return 0;
+}
+
 static int counter_numaker_set_top_value(const struct device *dev,
 					 const struct counter_top_cfg *top_cfg)
 {
@@ -225,6 +327,19 @@ static int counter_numaker_set_top_value(const struct device *dev,
 	struct counter_numaker_data *data = dev->data;
 	uint32_t ctl;
 	int err = 0;
+	uint32_t ticks = top_cfg->ticks & TMR_CMP_MAX;
+
+	/*
+	 * ticks <= 1: switch to GPIO interrupt mode so the callback fires
+	 * on every external pulse rather than on a compare match.
+	 */
+	if (ticks <= 1) {
+		counter_numaker_exit_gpio_mode(dev);
+		return counter_numaker_enter_gpio_mode(dev, top_cfg);
+	}
+
+	/* Leaving GPIO mode — restore normal timer operation */
+	counter_numaker_exit_gpio_mode(dev);
 
 	/* Disable interrupt while reconfiguring */
 	ctl = tmr_read(cfg, TMR_CTL);
@@ -232,7 +347,7 @@ static int counter_numaker_set_top_value(const struct device *dev,
 	tmr_write(cfg, TMR_CTL, ctl);
 
 	/* Set compare value (periodic mode: counter resets at CMP match) */
-	tmr_write(cfg, TMR_CMP, top_cfg->ticks & TMR_CMP_MAX);
+	tmr_write(cfg, TMR_CMP, ticks);
 
 	/* Clear pending interrupt */
 	tmr_write(cfg, TMR_INTSTS, TMR_INTSTS_TIF);
@@ -243,7 +358,7 @@ static int counter_numaker_set_top_value(const struct device *dev,
 	if (!(top_cfg->flags & COUNTER_TOP_CFG_DONT_RESET)) {
 		/* Write any value to CNT resets it to 0 */
 		tmr_write(cfg, TMR_CNT, 0);
-	} else if ((tmr_read(cfg, TMR_CNT) & TMR_CNT_Msk) >= top_cfg->ticks) {
+	} else if ((tmr_read(cfg, TMR_CNT) & TMR_CNT_Msk) >= ticks) {
 		err = -ETIME;
 		if (top_cfg->flags & COUNTER_TOP_CFG_RESET_WHEN_LATE) {
 			tmr_write(cfg, TMR_CNT, 0);
@@ -301,6 +416,8 @@ static int counter_numaker_init(const struct device *dev)
 	struct counter_numaker_data *data = dev->data;
 	struct numaker_scc_subsys scc_subsys;
 	int err;
+
+	data->dev = dev;
 
 	SYS_UnlockReg();
 
@@ -407,6 +524,11 @@ static DEVICE_API(counter, counter_numaker_api) = {
 				  (NUMAKER_TIMER_MODE_TOGGLE_OUTPUT),                                  \
 				  (NUMAKER_TIMER_MODE_PERIODIC))))
 
+#define COUNTER_NUMAKER_GPIO_INIT(n)                                                               \
+	COND_CODE_1(DT_INST_NODE_HAS_PROP(n, gpios),                                               \
+		    (.gpio = GPIO_DT_SPEC_INST_GET(n, gpios),),                                     \
+		    (.gpio = {0},))
+
 #define COUNTER_NUMAKER_INIT(n)                                                                    \
 	COUNTER_NUMAKER_IRQ_CONFIG(n)                                                              \
 	COUNTER_NUMAKER_PINCTRL_DEFINE(n)                                                          \
@@ -432,6 +554,7 @@ static DEVICE_API(counter, counter_numaker_api) = {
 						      NUMAKER_TIMER_TRIGGER_SRC_TIMEOUT),           \
 		.count_rising = COUNTER_NUMAKER_COUNT_RISING(n),                                   \
 		.trigger_pdma = DT_INST_PROP(n, trigger_pdma),                                     \
+		COUNTER_NUMAKER_GPIO_INIT(n)                                                       \
 		.irq_config = irq_config_##n,                                                      \
 	};                                                                                         \
 	DEVICE_DT_INST_DEFINE(n, counter_numaker_init, NULL, &counter_numaker_data_##n,            \

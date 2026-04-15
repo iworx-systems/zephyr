@@ -64,3 +64,11 @@ properties:
                   with event counter mode to trigger DMA every N external
                   pulses.
       "capture" - Capture event (edge detected on TMx_EXT pin).
+
+  gpios:
+    type: phandle-array
+    description: |
+      GPIO spec for the TMx pin. Required when the driver needs to
+      fall back to GPIO interrupt mode (set_top_value with ticks == 1).
+      In this mode the pin is reconfigured as a GPIO input and an
+      interrupt fires on every edge, giving a per-clock-pulse callback.
