@@ -1,0 +1,87 @@
+/*
+ * Copyright (c) 2024 Nuvoton Technology Corporation.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * DAC loopback test for numaker_pfm_m487.
+ *
+ * On this board, PB12 and PB13 are connected to the NuLink ICE VCOM
+ * (UART TX and RX respectively). PB12 is actively driven by the NuLink
+ * TX line, making DAC0 unusable on that pin.
+ *
+ * This overlay uses DAC1 on PB13 (NuLink RX is high-impedance input)
+ * and reads back through EADC0 channel 13 on the same pin.
+ *
+ * UART0 console is remapped from PB12/PB13 to PD2/PD3.
+ *
+ * Note: The NuLink RX pull-up causes a DC offset on PB13 that affects
+ * low DAC output values. The test passes for mid-to-high scale values.
+ */
+
+#include <nuvoton/numicro/M48x-pinctrl.h>
+#include <zephyr/dt-bindings/adc/adc.h>
+
+/ {
+	zephyr,user {
+		io-channels = <&dac1 0 &eadc0 13>;
+		io-channel-names = "dac1", "adc1";
+	};
+};
+
+&pinctrl {
+	uart0_default: uart0_default {
+		group0 {
+			pinmux = <UART0_RXD_PD2>, <UART0_TXD_PD3>;
+		};
+	};
+
+	dac1_default: dac1_default {
+		group0 {
+			pinmux = <DAC1_OUT_PB13>;
+			input-disable;
+		};
+	};
+
+	eadc0_default: eadc0_default {
+		group0 {
+			pinmux = <EADC0_CH13_PB13>;
+			input-disable;
+		};
+	};
+};
+
+&gpiod {
+	status = "okay";
+};
+
+&dac1 {
+	status = "okay";
+	pinctrl-0 = <&dac1_default>;
+	pinctrl-names = "default";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0 {
+		reg = <0>;
+		zephyr,resolution = <12>;
+		zephyr,buffered;
+	};
+};
+
+&eadc0 {
+	status = "okay";
+	pinctrl-0 = <&eadc0_default>;
+	pinctrl-names = "default";
+
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@d {
+		reg = <13>;
+		zephyr,gain = "ADC_GAIN_1";
+		zephyr,reference = "ADC_REF_VDD_1";
+		zephyr,resolution = <12>;
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_TICKS, 255)>;
+	};
+};

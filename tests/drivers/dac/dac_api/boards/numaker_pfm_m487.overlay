@@ -1,0 +1,36 @@
+/*
+ * Copyright (c) 2024 Nuvoton Technology Corporation.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * DAC0 output is on PB12 which conflicts with the default UART0 console pins.
+ * This overlay remaps UART0 to PD2/PD3 and configures PB12 for DAC0 output.
+ * An external USB-UART adapter must be connected to PD2 (RXD) and PD3 (TXD)
+ * for serial console access.
+ */
+
+#include <nuvoton/numicro/M48x-pinctrl.h>
+
+&pinctrl {
+	uart0_default: uart0_default {
+		group0 {
+			pinmux = <UART0_RXD_PD2>, <UART0_TXD_PD3>;
+		};
+	};
+
+	dac0_default: dac0_default {
+		group0 {
+			pinmux = <DAC0_OUT_PB12>;
+		};
+	};
+};
+
+&gpiod {
+	status = "okay";
+};
+
+&dac0 {
+	status = "okay";
+	pinctrl-0 = <&dac0_default>;
+	pinctrl-names = "default";
+};

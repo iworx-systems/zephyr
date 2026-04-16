@@ -59,6 +59,7 @@ tests:
       - bl652_dvk
       - bl653_dvk
       - bl5340_dvk/nrf5340/cpuapp
+      - numaker_pfm_m487
   drivers.dac.api.dac1_channel1:
     extra_args:
       - EXTRA_DTC_OVERLAY_FILE="dac1-channel1.overlay"

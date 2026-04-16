@@ -47,3 +47,8 @@ tests:
       - bl653_dvk
       - bl654_dvk
       - bl5340_dvk/nrf5340/cpuapp
+  drivers.dac.loopback.numaker_dac0_eadc0_ch12:
+    platform_allow:
+      - numaker_pfm_m487
+    harness_config:
+      fixture: dac_adc_loopback

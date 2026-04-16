@@ -78,6 +78,10 @@ menu "Nuvoton NuMaker drivers"
 		bool "NuMaker ADC"
 		help
 		  Enable Nuvoton ADC HAL module driver
+	config HAS_NUMAKER_DAC
+		bool "NuMaker DAC"
+		help
+		  Enable Nuvoton DAC HAL module driver
 	config HAS_NUMAKER_RMC
 		bool "NuMaker RMC"
 		help

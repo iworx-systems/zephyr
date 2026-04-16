@@ -1,0 +1,11 @@
+# Copyright (c) 2024 Nuvoton Technology Corporation.
+# SPDX-License-Identifier: Apache-2.0
+
+config DAC_NUMAKER
+	bool "Nuvoton NuMaker DAC driver"
+	default y
+	depends on DT_HAS_NUVOTON_NUMAKER_DAC_ENABLED
+	select PINCTRL
+	select HAS_NUMAKER_DAC
+	help
+	  Enable the DAC driver for Nuvoton NuMaker family of processors.

@@ -412,6 +412,24 @@
 			#io-channel-cells = <1>;
 		};
 
+		dac0: dac@40047000 {
+			compatible = "nuvoton,numaker-dac";
+			reg = <0x40047000 0x40>;
+			clocks = <&pcc NUMAKER_DAC_MODULE NUMAKER_NA NUMAKER_NA>;
+			resets = <&rst NUMAKER_DAC_RST>;
+			#io-channel-cells = <1>;
+			status = "disabled";
+		};
+
+		dac1: dac@40047040 {
+			compatible = "nuvoton,numaker-dac";
+			reg = <0x40047040 0x40>;
+			clocks = <&pcc NUMAKER_DAC_MODULE NUMAKER_NA NUMAKER_NA>;
+			resets = <&rst NUMAKER_DAC_RST>;
+			#io-channel-cells = <1>;
+			status = "disabled";
+		};
+
 		usbd: usbd@400c0000 {
 			compatible = "nuvoton,numaker-usbd";
 			reg = <0x400c0000 0x1000>;
