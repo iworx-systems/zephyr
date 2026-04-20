@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_M453
+
+config NUM_IRQS
+	default 64
+
+endif # SOC_M453

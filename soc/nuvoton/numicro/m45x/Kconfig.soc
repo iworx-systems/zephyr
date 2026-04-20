@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config SOC_SERIES_M45X
+	bool
+	select SOC_FAMILY_NUMICRO
+	select SOC_FAMILY_NUMAKER
+	help
+	  Enable support for NUVOTON M45X MCU series
+
+config SOC_M453
+	bool
+	select SOC_SERIES_M45X
+
+config SOC_SERIES
+	default "m45x" if SOC_SERIES_M45X
+
+config SOC
+	default "m453" if SOC_M453

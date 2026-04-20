@@ -1,6 +1,9 @@
 family:
 - name: numicro
   series:
+  - name: m45x
+    socs:
+    - name: m453
   - name: m48x
     socs:
     - name: m483

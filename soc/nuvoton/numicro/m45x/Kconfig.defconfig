@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+if SOC_SERIES_M45X
+
+rsource "Kconfig.defconfig.m45*"
+
+config RESET
+	default y
+
+endif # SOC_SERIES_M45X
