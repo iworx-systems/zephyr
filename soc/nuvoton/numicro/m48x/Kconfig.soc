@@ -10,6 +10,10 @@ config SOC_SERIES_M48X
 	help
 	  Enable support for NUVOTON M48X MCU series
 
+config SOC_M481
+	bool
+	select SOC_SERIES_M48X
+
 config SOC_M483
 	bool
 	select SOC_SERIES_M48X
@@ -26,4 +30,5 @@ config SOC_SERIES
 	default "m48x" if SOC_SERIES_M48X
 
 config SOC
+	default "m481" if SOC_M481
 	default "m487" if SOC_M487
