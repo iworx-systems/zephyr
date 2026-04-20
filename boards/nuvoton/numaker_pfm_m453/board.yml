@@ -1,0 +1,6 @@
+board:
+  name: numaker_pfm_m453
+  full_name: NUMAKER PFM M453VG6AE
+  vendor: nuvoton
+  socs:
+  - name: m453

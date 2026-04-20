@@ -1,0 +1,10 @@
+identifier: numaker_pfm_m453
+name: NUVOTON-NUMAKER-PFM-M453
+type: mcu
+arch: arm
+toolchain:
+  - zephyr
+  - gnuarmemb
+ram: 32
+flash: 256
+vendor: nuvoton

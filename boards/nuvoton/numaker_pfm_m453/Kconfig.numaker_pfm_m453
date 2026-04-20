@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+
+config BOARD_NUMAKER_PFM_M453
+	select SOC_M453
