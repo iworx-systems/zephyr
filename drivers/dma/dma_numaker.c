@@ -53,6 +53,10 @@ struct dma_numaker_pdma_channel {
 	uint8_t linked_channel;
 	bool source_chaining_en;
 	bool dest_chaining_en;
+	bool stride_rewind;
+	uint16_t stride_stcr;
+	uint16_t stride_sasol;
+	uint16_t stride_dasol;
 	uint32_t burst_type;
 	uint32_t burst_size;
 };
@@ -161,8 +165,8 @@ static int dma_numaker_pdma_setup_desc(const struct dma_numaker_pdma_config *cfg
 		return -EINVAL;
 	}
 
-	if ((block_cfg->source_gather_interval != 0U) || (block_cfg->dest_scatter_interval != 0U) ||
-	    (block_cfg->source_gather_count != 0U) || (block_cfg->dest_scatter_count != 0U) ||
+	if ((block_cfg->dest_scatter_interval != 0U) ||
+	    (!block_cfg->source_gather_en && block_cfg->dest_scatter_count != 0U) ||
 	    block_cfg->source_reload_en || block_cfg->dest_reload_en) {
 		return -ENOTSUP;
 	}
@@ -186,6 +190,7 @@ static int dma_numaker_pdma_setup_desc(const struct dma_numaker_pdma_config *cfg
 	      burst_type |
 	      burst_size |
 	      (callback_en ? PDMA_TBINTDIS_ENABLE : PDMA_TBINTDIS_DISABLE) |
+	      (ch_data->stride_rewind ? PDMA_DSCT_CTL_STRIDEEN_Msk : 0U) |
 	      (link_next ? PDMA_OP_SCATTER : PDMA_OP_BASIC);
 
 	desc->CTL = ctl;
@@ -216,24 +221,36 @@ static int dma_numaker_pdma_program(const struct device *dev, uint32_t channel,
 		return -EINVAL;
 	}
 
+	uint32_t txcnt = trans_count;
+
 	/* Fully reconstruct CTL from stored channel state rather than
 	 * read-modify-write.  After dma_stop the errata 2.9 flush
 	 * clobbers CTL with dummy values; R-M-W would preserve the
 	 * wrong burst_type (REQ_BURST instead of REQ_SINGLE). */
 	cfg->pdma->DSCT[channel].CTL =
-		((trans_count - 1U) << PDMA_DSCT_CTL_TXCNT_Pos) |
+		((txcnt - 1U) << PDMA_DSCT_CTL_TXCNT_Pos) |
 		dma_numaker_pdma_width_cfg(ch_data->transfer_width) |
 		src_ctrl | dst_ctrl |
 		ch_data->burst_type |
 		ch_data->burst_size |
 		(ch_data->complete_callback_en ? PDMA_TBINTDIS_ENABLE
 					       : PDMA_TBINTDIS_DISABLE) |
+		(ch_data->stride_rewind ? PDMA_DSCT_CTL_STRIDEEN_Msk : 0U) |
 		PDMA_OP_BASIC;
 	cfg->pdma->DSCT[channel].SA = src;
 	cfg->pdma->DSCT[channel].DA = dst;
 	PDMA_SetTransferMode(cfg->pdma, channel,
 				(ch_data->direction == MEMORY_TO_MEMORY) ? PDMA_MEM : ch_data->dma_slot,
 				0, 0);
+
+	if (ch_data->stride_rewind) {
+		cfg->pdma->STRIDE[channel].STCR = ch_data->stride_stcr;
+		cfg->pdma->STRIDE[channel].ASOCR =
+			((uint32_t)ch_data->stride_dasol << PDMA_ASOCRn_DASOL_Pos) |
+			((uint32_t)ch_data->stride_sasol << PDMA_ASOCRn_SASOL_Pos);
+		cfg->pdma->REPEAT[channel].AICTL = 0;
+		cfg->pdma->REPEAT[channel].RCNT = 0;
+	}
 
 	return 0;
 }
@@ -330,8 +347,24 @@ static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 		return err;
 	}
 
-	burst_type = (dma_cfg->source_handshake || dma_cfg->dest_handshake) ?
-		PDMA_REQ_SINGLE : PDMA_REQ_BURST;
+	/* M480 TXTYPE: 0 = burst (runs ALL TXCNT continuously after one
+	 * trigger), 1 = single (1 element per trigger, BURSIZE ignored).
+	 *
+	 * Stride mode uses burst so that one trigger transfers the
+	 * entire TXCNT (one frame worth of elements) at bus speed.
+	 * The caller's ISR resets TXCNT after each frame.
+	 *
+	 * Non-stride peripheral DMA uses single mode so each hardware
+	 * request transfers exactly one element.
+	 *
+	 * Memory-to-memory uses burst for maximum throughput. */
+	if (dma_cfg->head_block->source_gather_en) {
+		burst_type = PDMA_REQ_BURST;
+	} else if (dma_cfg->source_handshake || dma_cfg->dest_handshake) {
+		burst_type = PDMA_REQ_SINGLE;
+	} else {
+		burst_type = PDMA_REQ_BURST;
+	}
 	ch_data = &data->channels[channel];
 
 	if (PDMA_IS_CH_BUSY(cfg->pdma, channel) != 0U) {
@@ -356,13 +389,43 @@ static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 	ch_data->dest_chaining_en = dma_cfg->dest_chaining_en;
 	ch_data->burst_type = burst_type;
 	ch_data->burst_size = burst_size;
+	ch_data->stride_rewind = false;
+	ch_data->stride_stcr = 0;
+	ch_data->stride_sasol = 0;
+	ch_data->stride_dasol = 0;
+
+	if (dma_cfg->head_block->source_gather_en) {
+		uint16_t gather_count = dma_cfg->head_block->source_gather_count;
+		size_t block_size = dma_cfg->head_block->block_size;
+		uint32_t frame_bytes = (uint32_t)gather_count * ch_data->transfer_width;
+
+		/* Stride mode available on channels 0-5 */
+		if (channel >= 6U) {
+			LOG_ERR("stride mode only on ch 0-5");
+			return -ENOTSUP;
+		}
+		if (gather_count == 0 || block_size < frame_bytes) {
+			return -EINVAL;
+		}
+		ch_data->stride_rewind = true;
+		ch_data->stride_stcr = gather_count - 1U;
+		ch_data->stride_sasol = (uint16_t)(-(int16_t)gather_count);
+
+		/* Destination stride offset: rewind dest pointer each row
+		 * so padding elements get overwritten by the next row. */
+		if (dma_cfg->head_block->dest_scatter_count != 0U) {
+			ch_data->stride_dasol = (uint16_t)(-(int16_t)
+				dma_cfg->head_block->dest_scatter_count);
+		}
+	}
 
 	if (ch_data->scatter_enabled) {
 		err = dma_numaker_pdma_setup_scatter(dev, channel, dma_cfg, ch_data, burst_type,
 					     burst_size);
 	} else {
-		if ((dma_cfg->head_block->next_block != NULL) || dma_cfg->head_block->source_gather_en ||
-		    dma_cfg->head_block->dest_scatter_en) {
+		if ((dma_cfg->head_block->next_block != NULL) ||
+		    (!dma_cfg->head_block->source_gather_en &&
+		     dma_cfg->head_block->dest_scatter_en)) {
 			return -ENOTSUP;
 		}
 
@@ -378,6 +441,18 @@ static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 	}
 	if (err != 0) {
 		return err;
+	}
+
+	/* Stride-rewind registers: set STRIDEEN and write STRIDE.STCR,
+	 * STRIDE.ASOCR so the source address rewinds each row. */
+	if (ch_data->stride_rewind) {
+		cfg->pdma->DSCT[channel].CTL |= PDMA_DSCT_CTL_STRIDEEN_Msk;
+		cfg->pdma->STRIDE[channel].STCR = ch_data->stride_stcr;
+		cfg->pdma->STRIDE[channel].ASOCR =
+			((uint32_t)ch_data->stride_dasol << PDMA_ASOCRn_DASOL_Pos) |
+			((uint32_t)ch_data->stride_sasol << PDMA_ASOCRn_SASOL_Pos);
+		cfg->pdma->REPEAT[channel].AICTL = 0;
+		cfg->pdma->REPEAT[channel].RCNT = 0;
 	}
 
 	if (dma_cfg->dma_callback != NULL) {
