@@ -46,4 +46,26 @@ config UDC_NUMAKER_DMA_TIMEOUT_MS
 	help
 	  This configures timeout of DMA transfer in milliseconds.
 
+config UDC_NUMAKER_PROBE
+	bool "UDC NuMaker latency probes (for throughput investigation)"
+	default n
+	help
+	  Enable cycle-counter probes inside the IN-direction critical
+	  path (xfer_in, DMA wait, msg_handle_in, ISR -> handler latency).
+	  Use udc_numaker_probe_dump_to_printk() to dump histograms.
+	  Adds a few atomic ops per URB; not for production builds.
+
+config UDC_NUMAKER_FAST_IN
+	bool "UDC NuMaker fast-in DMA chaining (HSUSBD)"
+	default n
+	depends on UDC_NUMAKER_DMA
+	help
+	  Pump multi-packet bulk IN URBs entirely from IRQ context: the
+	  TXPKIF ISR re-arms the next DMA chunk and the DMA-done ISR
+	  re-enables TXPKIEN, so the UDC thread is involved only at URB
+	  start and URB completion (not per packet).  Cuts per-packet
+	  software roundtrip from ~40 us to ~15 us on M487.  Only one IN
+	  URB can be fast-pathed at a time; concurrent IN EPs fall back
+	  to the slow path.
+
 endif # UDC_NUMAKER

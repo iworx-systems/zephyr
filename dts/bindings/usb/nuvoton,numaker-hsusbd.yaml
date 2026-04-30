@@ -31,3 +31,21 @@ properties:
     description: |
       Supports USB controller can be disabled temporarily when USB cable is unplugged
       and then enabled back when the cable is re-plugged.
+
+  bulk-ep-buf-packets:
+    type: array
+    description: |
+      Per-endpoint bulk FIFO depth in MPS-sized packets, as flat
+      (endpoint-address, packet-count) pairs.  Reserves
+      packet-count * MPS bytes of HSUSBD DMA buffer for the listed
+      endpoints at ep_enable time, allowing HW to pipeline DMA fill
+      with USB transmission (paired with UDC_NUMAKER_FAST_IN).
+      Endpoints not listed default to 1 (MPS-only).  The total
+      reservation across all bulk endpoints cannot exceed
+      dma-buffer-size; the driver falls back to MPS for any EP whose
+      enlarged request will not fit.
+
+      Example — 4-MPS depth on bulk-IN 0x81 (the bulk-OUT 0x02 is
+      omitted so it falls back to MPS):
+
+          bulk-ep-buf-packets = <0x81 4>;

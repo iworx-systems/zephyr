@@ -19,6 +19,115 @@ LOG_MODULE_REGISTER(udc_numaker, CONFIG_UDC_DRIVER_LOG_LEVEL);
 #include "udc_common.h"
 #include "udc_numaker.h"
 
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+/* ------------------------------------------------------------------ */
+/* Latency probes for IN-direction critical path.  Atomic histograms,  */
+/* dumped via udc_numaker_probe_dump_to_printk().  Disabled by default;*/
+/* enable with CONFIG_UDC_NUMAKER_PROBE=y.                              */
+/* ------------------------------------------------------------------ */
+#define UDC_PROBE_BUCKETS 24
+
+struct udc_probe_hist {
+	const char *name;
+	atomic_t count;
+	atomic_t sum_cyc;
+	atomic_t min_cyc;
+	atomic_t max_cyc;
+	atomic_t buckets[UDC_PROBE_BUCKETS];
+};
+
+#define UDC_PROBE_INIT(_name) { .name = _name, .min_cyc = ATOMIC_INIT(UINT32_MAX) }
+
+static struct udc_probe_hist p_xfer_in       = UDC_PROBE_INIT("udc xfer_in (full)");
+static struct udc_probe_hist p_dma_wait      = UDC_PROBE_INIT("udc DMA wait");
+static struct udc_probe_hist p_trigger       = UDC_PROBE_INIT("udc ep_trigger");
+static struct udc_probe_hist p_handle_in     = UDC_PROBE_INIT("udc handle_in");
+static struct udc_probe_hist p_isr_to_handle = UDC_PROBE_INIT("isr → handle_in");
+static struct udc_probe_hist p_in_isr        = UDC_PROBE_INIT("ep_th IN ISR dur");
+static struct udc_probe_hist p_fastin_dma    = UDC_PROBE_INIT("fastin DMA arm→done");
+static struct udc_probe_hist p_pkt_to_pkt    = UDC_PROBE_INIT("fastin TXPKIF gap");
+
+static struct udc_probe_hist *udc_probes_all[] = {
+	&p_xfer_in, &p_dma_wait, &p_trigger,
+	&p_handle_in, &p_isr_to_handle, &p_in_isr,
+	&p_fastin_dma, &p_pkt_to_pkt,
+};
+
+/* Set by ISR top-half on IN direction; cleared/consumed by handle_in. */
+static atomic_t s_isr_in_ts;
+/* Timestamps for fast-in DMA / packet gap probes. */
+static atomic_t s_fastin_dma_arm_ts;
+static atomic_t s_fastin_last_txpkif_ts;
+
+static inline void udc_probe_record(struct udc_probe_hist *h, uint32_t cyc)
+{
+	atomic_inc(&h->count);
+	atomic_add(&h->sum_cyc, cyc);
+
+	uint32_t cur = (uint32_t)atomic_get(&h->min_cyc);
+	while (cyc < cur && !atomic_cas(&h->min_cyc, cur, cyc)) {
+		cur = (uint32_t)atomic_get(&h->min_cyc);
+	}
+	cur = (uint32_t)atomic_get(&h->max_cyc);
+	while (cyc > cur && !atomic_cas(&h->max_cyc, cur, cyc)) {
+		cur = (uint32_t)atomic_get(&h->max_cyc);
+	}
+	int b = (cyc == 0) ? 0 : (31 - __builtin_clz(cyc));
+	if (b >= UDC_PROBE_BUCKETS) {
+		b = UDC_PROBE_BUCKETS - 1;
+	}
+	atomic_inc(&h->buckets[b]);
+}
+
+void udc_numaker_probe_dump_to_printk(void)
+{
+	uint64_t hz = sys_clock_hw_cycles_per_sec();
+	for (size_t i = 0; i < ARRAY_SIZE(udc_probes_all); i++) {
+		struct udc_probe_hist *h = udc_probes_all[i];
+		atomic_val_t cnt = atomic_get(&h->count);
+		if (cnt == 0) {
+			continue;
+		}
+		uint32_t mn = (uint32_t)atomic_get(&h->min_cyc);
+		uint32_t mx = (uint32_t)atomic_get(&h->max_cyc);
+		uint32_t sum = (uint32_t)atomic_get(&h->sum_cyc);
+		uint32_t avg = sum / (uint32_t)cnt;
+		uint32_t mn_ns = (uint32_t)((uint64_t)mn * 1000000000ULL / hz);
+		uint32_t avg_ns = (uint32_t)((uint64_t)avg * 1000000000ULL / hz);
+		uint32_t mx_ns = (uint32_t)((uint64_t)mx * 1000000000ULL / hz);
+		printk("[udc_probe] %-22s n=%ld min=%u ns avg=%u ns max=%u ns\n",
+		       h->name, (long)cnt, mn_ns, avg_ns, mx_ns);
+	}
+}
+
+void udc_numaker_probe_reset(void)
+{
+	for (size_t i = 0; i < ARRAY_SIZE(udc_probes_all); i++) {
+		struct udc_probe_hist *h = udc_probes_all[i];
+		atomic_set(&h->count, 0);
+		atomic_set(&h->sum_cyc, 0);
+		atomic_set(&h->min_cyc, UINT32_MAX);
+		atomic_set(&h->max_cyc, 0);
+		for (int b = 0; b < UDC_PROBE_BUCKETS; b++) {
+			atomic_set(&h->buckets[b], 0);
+		}
+	}
+	atomic_set(&s_isr_in_ts, 0);
+}
+
+/* udc_numaker_dump_state defined later, after struct + helper definitions
+ * are in scope.  Forward declared here so the prototype is exported. */
+void udc_numaker_dump_state(const struct device *dev);
+
+#define UDC_PROBE_T0(_v)        uint32_t _v = k_cycle_get_32()
+#define UDC_PROBE_REC(_h, _t0)  udc_probe_record(&(_h), k_cycle_get_32() - (_t0))
+#else
+/* When probes are off, declare the variable anyway (with __maybe_unused)
+ * so callers can pass it to UDC_PROBE_REC without #ifdef wrappers. */
+#define UDC_PROBE_T0(_v)        __maybe_unused uint32_t _v = 0
+#define UDC_PROBE_REC(_h, _t0)  ((void)(_t0))
+#endif /* CONFIG_UDC_NUMAKER_PROBE */
+
 /* USBD notes
  *
  * 1. Require 48MHz clock source
@@ -41,7 +150,7 @@ LOG_MODULE_REGISTER(udc_numaker, CONFIG_UDC_DRIVER_LOG_LEVEL);
 
 /* USBD controller does not support DMA, and PHY does not require a delay after reset. */
 
-#if defined(CONFIG_SOC_SERIES_M46X)
+#if defined(CONFIG_SOC_SERIES_M46X) || defined(CONFIG_SOC_SERIES_M48X)
 #if !defined(USBD_ATTR_PWRDN_Msk)
 #define USBD_ATTR_PWRDN_Msk BIT(9)
 #endif
@@ -63,7 +172,7 @@ LOG_MODULE_REGISTER(udc_numaker, CONFIG_UDC_DRIVER_LOG_LEVEL);
 /* Wait for Control Data IN token timeout */
 #define NUMAKER_HSUSBD_CTRL_DATA_IN_TOKEN_TIMEOUT_US 500
 
-#if defined(CONFIG_SOC_SERIES_M46X)
+#if defined(CONFIG_SOC_SERIES_M46X) || defined(CONFIG_SOC_SERIES_M48X)
 #define CEPBUFSTART CEPBUFST
 #define EPBUFSTART  EPBUFST
 #elif defined(CONFIG_SOC_SERIES_M55M1X)
@@ -73,6 +182,40 @@ LOG_MODULE_REGISTER(udc_numaker, CONFIG_UDC_DRIVER_LOG_LEVEL);
 #elif defined(CONFIG_SOC_SERIES_M333X)
 #define CEPBUFSTART CEPBUFST
 #define EPBUFSTART  EPBUFST
+#endif
+
+#if defined(CONFIG_SOC_SERIES_M48X)
+/* Pick the next DMA arm size for a fast-in URB.
+ *
+ * Default: chunk = remaining.  The HSUSBD's "DMA pause when EP FIFO is
+ * full / resume when HW drains it" mechanism handles arm sizes much
+ * larger than the EP FIFO — DMA fills, HW drains, DMA fills, etc.
+ *
+ * Special case for the LAST arm of a non-MPS-multiple URB: if the arm
+ * would contain BOTH full-MPS data AND a sub-MPS tail, split it.
+ * Reason: SHORTTXEN is consumed by the FIRST packet HW transmits after
+ * we set the bit.  If the last arm contains a full MPS packet ahead of
+ * the sub-MPS one, HW burns SHORTTXEN on the full packet (which
+ * doesn't need it) and the sub-MPS packet then sits in the FIFO
+ * forever — the EP wedges with EPDATCNT=tail, EPRSPCTL=0, NAKIF
+ * latched.  Splitting puts the sub-MPS tail into its own final arm so
+ * the SHORTTXEN applied after that arm's DMA-done has nothing to
+ * compete with.
+ */
+static inline uint32_t fastin_pick_chunk(uint32_t remaining, uint32_t mps)
+{
+	uint32_t chunk = remaining;
+
+	if (chunk > mps && (chunk % mps) != 0) {
+		chunk -= (chunk % mps);
+	}
+	return chunk;
+}
+
+// EPINTSTS is not available on the usbd peripheral on of M48x series SOCs
+#define NUMAKER_USBD_USE_EPINTSTS	0
+#else
+#define NUMAKER_USBD_USE_EPINTSTS	1
 #endif
 
 enum numaker_usbd_msg_type {
@@ -192,6 +335,14 @@ struct udc_numaker_config {
 	int speed_idx;
 	void (*make_thread)(const struct device *dev);
 	bool is_hsusbd;
+	/* Optional per-EP bulk FIFO depth from DT, as flat
+	 * (ep-addr, packet-count) pairs.  See bulk-ep-buf-packets in
+	 * dts/bindings/usb/nuvoton,numaker-hsusbd.yaml.  ep_buf_packets_len
+	 * is the number of u16 entries (= 2 * pair count).  Length 0 means
+	 * "no per-EP DT config; all bulk EPs use MPS-only buffers".
+	 */
+	const uint16_t *ep_buf_packets;
+	uint32_t ep_buf_packets_len;
 };
 
 /* EP H/W context manager */
@@ -230,12 +381,61 @@ struct udc_numaker_data {
 
 #if defined(CONFIG_UDC_NUMAKER_DMA)
 	struct k_sem sem_dma_done;
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	/* Binary semaphore arbitrating ownership of the single HSUSBD
+	 * DMA engine.  Slow-path DMA takes it for the duration of one
+	 * MPS-sized transfer; fast-in takes it at URB start and releases
+	 * at URB completion (so its in-IRQ chained DMAs can't be
+	 * stomped on by a concurrent slow-path EP). */
+	struct k_sem dma_arbiter;
+#endif
+#endif
+
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	/* IRQ-driven fast-in state — only one IN URB at a time may use
+	 * the fast path; concurrent IN EPs fall back to the slow path. */
+	struct {
+		bool active;
+		bool shortx_pending;   /* set in BUFEMPTYIF/start when arming
+					* a sub-MPS chunk; consumed in
+					* DMA-done IRQ that sets EPRSPCTL.
+					* SHORTTXEN must be applied AFTER
+					* DMA finishes loading the FIFO,
+					* not before — see MSC HAL example
+					* (MassStorage.c, BUSINTSTS_DMADONEIF
+					* handler).  Setting it before DMA
+					* arms causes HW to consume the bit
+					* on a spurious 0-byte packet,
+					* leaving the just-loaded short
+					* chunk stuck in the FIFO. */
+		uint8_t ep;            /* EP address (e.g. 0x81) */
+		uint32_t ep_hw_idx;    /* HW index for register access */
+		uint8_t *next_ptr;     /* next byte to DMA */
+		uint32_t remaining;    /* bytes left to DMA */
+		uint32_t total_len;    /* total bytes the URB delivers */
+		uint32_t mps;
+		uint32_t pkts_in_flight; /* packets currently queued in FIFO */
+		struct net_buf *buf;
+	} fastin;
 #endif
 
 	struct k_event events;
 
 	bool status_out;
 };
+
+/* Sentinel passed to numaker_hsusbd_fastin_teardown() to mean "tear down
+ * whatever fast-in URB is active, regardless of EP address".  Used by
+ * the bus-reset path.  EP addresses use 7 bits + 1 dir bit so 0xFF can
+ * never collide with a real address. */
+#define NUMAKER_FASTIN_TEARDOWN_ANY 0xFF
+
+
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+static void numaker_hsusbd_fastin_teardown(const struct device *dev, uint8_t ep);
+#else
+#define numaker_hsusbd_fastin_teardown(dev, ep) do {} while (0)
+#endif
 
 static inline void numaker_usbd_sw_connect(const struct device *dev)
 {
@@ -376,6 +576,10 @@ static inline void numaker_usbd_ep_set_stall(struct numaker_usbd_ep *ep_cur)
 
 			eprspctl &= ~(HSUSBD_EPRSPCTL_HALT_Msk | HSUSBD_EPRSPCTL_TOGGLE_Msk);
 			eprspctl |= HSUSBD_EP_RSPCTL_HALT;
+			/* Flush FIFO atomically with HALT so any data DMA'd
+			 * in just before the stall doesn't get transmitted
+			 * later when the halt is cleared. */
+			eprspctl |= HSUSBD_EPRSPCTL_FLUSH_Msk;
 			ep_base->EPRSPCTL = eprspctl;
 		}
 	} else {
@@ -400,11 +604,22 @@ static inline void numaker_usbd_ep_clear_stall_n_data_toggle(struct numaker_usbd
 			/* Reset EP to unstalled and H/W will care toggle bit reset */
 			base->CEPCTL = 0;
 		} else {
-			/* Reset EP to unstalled and its data toggle bit to 0 */
+			/* Reset EP to unstalled, reset data toggle, AND flush
+			 * the EP's TX FIFO.  The flush is critical: without
+			 * it, any data that hardware DMA'd into the FIFO
+			 * before the stall took effect is preserved across
+			 * the halt cycle and gets transmitted on the next IN
+			 * token after clear-halt.  This was the root cause of
+			 * the iworx_acq_test "seed offset" symptom — a stuck
+			 * URB's data sat in the FIFO across recording_done +
+			 * the next recording's first IN tokens, prepending
+			 * stale ramp values to the new recording's bulk
+			 * stream. */
 			uint32_t eprspctl = ep_base->EPRSPCTL;
 
 			eprspctl &= ~(HSUSBD_EPRSPCTL_HALT_Msk | HSUSBD_EPRSPCTL_TOGGLE_Msk);
 			eprspctl |= HSUSBD_EP_RSPCTL_TOGGLE;
+			eprspctl |= HSUSBD_EPRSPCTL_FLUSH_Msk;
 			ep_base->EPRSPCTL = eprspctl;
 		}
 	} else {
@@ -453,12 +668,16 @@ static int numaker_usbd_enable_usb_phy(const struct device *dev)
 		HSUSBD_T *base = config->base;
 
 		base->PHYCTL |= HSUSBD_PHYCTL_PHYEN_Msk;
+		#if defined(CONFIG_SOC_SERIES_M48X)
+		k_busy_wait(1000);
+		#else
 		WAIT_FOR(base->PHYCTL & HSUSBD_PHYCTL_PHYCLKSTB_Msk,
 			 NUMAKER_HSUSBD_PHY_STABLE_TIMEOUT_US,
 			 ;);
 		if (!(base->PHYCTL & HSUSBD_PHYCTL_PHYCLKSTB_Msk)) {
 			return -EIO;
 		}
+		#endif
 	} else {
 		USBD_T *base = config->base;
 
@@ -484,7 +703,7 @@ static int numaker_usbd_hw_setup(const struct device *dev)
 
 	/* Configure USB role as USB Device and enable USB/PHY */
 	if (config->is_hsusbd) {
-#if defined(CONFIG_SOC_SERIES_M46X)
+#if defined(CONFIG_SOC_SERIES_M46X) || defined(CONFIG_SOC_SERIES_M48X)
 		/* Configure HSUSB role as USB Device and enable HSUSB/PHY */
 		SYS->USBPHY = (SYS->USBPHY &
 			       ~(SYS_USBPHY_HSUSBROLE_Msk | SYS_USBPHY_HSUSBACT_Msk)) |
@@ -509,7 +728,7 @@ static int numaker_usbd_hw_setup(const struct device *dev)
 		SYS->USBPHY |= SYS_USBPHY_HSUSBACT_Msk;
 #endif
 	} else {
-#if defined(CONFIG_SOC_SERIES_M46X)
+#if defined(CONFIG_SOC_SERIES_M46X) || defined(CONFIG_SOC_SERIES_M48X)
 		SYS->USBPHY = (SYS->USBPHY & ~SYS_USBPHY_USBROLE_Msk) |
 			      (SYS_USBPHY_USBROLE_STD_USBD | SYS_USBPHY_USBEN_Msk |
 			       SYS_USBPHY_SBO_Msk);
@@ -762,6 +981,11 @@ static void numaker_hsusbd_bus_reset_th(const struct device *dev)
 
 	/* For HSUSBD, enable back USB/PHY will be done in bottom-half for needed wait. */
 
+	/* Tear down any active fast-in URB before flushing EP FIFOs.  After
+	 * a bus reset BUFEMPTYIF will never fire for the in-flight URB, so
+	 * the arbiter would stay held forever otherwise. */
+	numaker_hsusbd_fastin_teardown(dev, NUMAKER_FASTIN_TEARDOWN_ANY);
+
 	for (; ep_cur != ep_end; ep_cur++) {
 		ep_base = numaker_usbd_ep_base(dev, ep_cur->ep_hw_idx);
 
@@ -949,6 +1173,7 @@ static void numaker_hsusbd_cep_th(const struct device *dev, uint32_t cepintsts)
 
 	/* Data packet received */
 	if (cepintsts & HSUSBD_CEPINTSTS_RXPKIF_Msk) {
+
 		/* Block until next CEP trigger */
 		base->CEPINTEN &= ~HSUSBD_CEPINTEN_RXPKIEN_Msk;
 
@@ -1009,6 +1234,14 @@ static void numaker_hsusbd_cep_th(const struct device *dev, uint32_t cepintsts)
 	}
 }
 
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+/* Forward declarations for fast-in helpers used by the ISR top-half
+ * below (definitions appear later, alongside the DMA helpers). */
+static inline void numaker_hsusbd_fastin_arm_chunk(const struct device *dev,
+						   uint8_t ep, uint8_t *ptr,
+						   uint32_t chunk);
+#endif
+
 /* Interrupt top half processing for BULK/INT/ISO transfer */
 static void numaker_hsusbd_ep_th(const struct device *dev, uint32_t ep_hw_idx, uint32_t epintsts)
 {
@@ -1017,6 +1250,7 @@ static void numaker_hsusbd_ep_th(const struct device *dev, uint32_t ep_hw_idx, u
 	uint8_t ep_idx;
 	uint8_t ep;
 	struct numaker_usbd_msg msg = {0};
+	UDC_PROBE_T0(_isr_t0);
 
 	/* EP direction, number, and address */
 	ep_dir = ((ep_base->EPCFG & HSUSBD_EPCFG_EPDIR_Msk) == HSUSBD_EP_CFG_DIR_IN)
@@ -1037,10 +1271,90 @@ static void numaker_hsusbd_ep_th(const struct device *dev, uint32_t ep_hw_idx, u
 		msg.type = NUMAKER_USBD_MSG_TYPE_OUT;
 		msg.out.ep = ep;
 	} else {
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+		struct udc_numaker_data *_priv = udc_get_private(dev);
+
+		if (_priv->fastin.active && _priv->fastin.ep == ep) {
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+			{
+				uint32_t prev = (uint32_t)atomic_set(
+					&s_fastin_last_txpkif_ts, _isr_t0);
+				if (prev) {
+					udc_probe_record(&p_pkt_to_pkt,
+						_isr_t0 - prev);
+				}
+			}
+#endif
+			/* Two events feed this branch in fast-in mode:
+			 *   - TXPKIF fires per packet (just an ack — HW is
+			 *     auto-flowing through the MPS FIFO).
+			 *   - BUFEMPTYIF fires when the whole DMA chunk has
+			 *     been transmitted and the FIFO is drained.
+			 * The ISR top-half disabled TXPKIEN; re-enable it
+			 * unless we're done so HW keeps streaming. */
+			if (epintsts & HSUSBD_EPINTSTS_BUFEMPTYIF_Msk) {
+				if (_priv->fastin.remaining > 0) {
+					uint32_t chunk = fastin_pick_chunk(
+						_priv->fastin.remaining,
+						_priv->fastin.mps);
+					uint8_t *p = _priv->fastin.next_ptr;
+
+					_priv->fastin.next_ptr += chunk;
+					_priv->fastin.remaining -= chunk;
+
+					if (_priv->fastin.remaining == 0 &&
+					    (chunk % _priv->fastin.mps) != 0) {
+						/* Defer SHORTTXEN until after
+						 * DMA-done — see fastin.shortx_pending
+						 * comment.  Setting it here would
+						 * race with HW transmitting a
+						 * spurious 0-byte packet on the
+						 * still-empty FIFO. */
+						_priv->fastin.shortx_pending = true;
+					}
+
+					/* arm_chunk now busy-waits for DMA done
+					 * and re-enables BUFEMPTYIEN/TXPKIEN
+					 * inline, so we don't touch EPINTEN
+					 * here. */
+					numaker_hsusbd_fastin_arm_chunk(dev, ep, p,
+									chunk);
+					UDC_PROBE_REC(p_in_isr, _isr_t0);
+					return;
+				}
+
+				/* URB done — disable both per-EP IRQs and
+				 * hand off to UDC thread for completion. */
+				ep_base->EPINTEN &= ~(
+					HSUSBD_EPINTEN_TXPKIEN_Msk |
+					HSUSBD_EPINTEN_BUFEMPTYIEN_Msk);
+				net_buf_pull(_priv->fastin.buf,
+					     _priv->fastin.total_len);
+				_priv->fastin.active = false;
+				/* Release the DMA engine for the next user
+				 * (slow-path on another EP, or our next
+				 * fast-in URB). */
+				k_sem_give(&_priv->dma_arbiter);
+				/* Fall through to post IN msg below. */
+			} else {
+				/* Plain TXPKIF — chunk not done yet.  HW
+				 * auto-flows in AUTO mode regardless of
+				 * TXPKIEN, so we leave it disabled to avoid
+				 * a per-packet ISR re-entry; we'll get the
+				 * chunk-done IRQ via BUFEMPTYIF. */
+				UDC_PROBE_REC(p_in_isr, _isr_t0);
+				return;
+			}
+		}
+#endif
 		msg.type = NUMAKER_USBD_MSG_TYPE_IN;
 		msg.in.ep = ep;
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+		atomic_set(&s_isr_in_ts, _isr_t0);
+#endif
 	}
 	numaker_usbd_send_msg(dev, &msg);
+	UDC_PROBE_REC(p_in_isr, _isr_t0);
 }
 
 /* USBD SRAM base for DMA */
@@ -1097,6 +1411,14 @@ static int numaker_hsusbd_ep_xfer_user_dma(struct numaker_usbd_ep *ep_cur, uint8
 		return 0;
 	}
 
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	/* Take exclusive ownership of the HSUSBD DMA engine.  If a
+	 * fast-in URB is currently pumping in IRQ context we wait until
+	 * it releases.  Without this guard, slow-path arming here would
+	 * stomp on the fast-in DMA registers and corrupt both transfers. */
+	k_sem_take(&priv->dma_arbiter, K_FOREVER);
+#endif
+
 	/* Reset DMA semaphore */
 	k_sem_reset(&priv->sem_dma_done);
 
@@ -1129,7 +1451,14 @@ static int numaker_hsusbd_ep_xfer_user_dma(struct numaker_usbd_ep *ep_cur, uint8
 	base->DMACTL |= HSUSBD_DMACTL_DMAEN_Msk;
 
 	/* Wait for DMA done */
+	UDC_PROBE_T0(_dma_t0);
 	err = k_sem_take(&priv->sem_dma_done, K_MSEC(CONFIG_UDC_NUMAKER_DMA_TIMEOUT_MS));
+	UDC_PROBE_REC(p_dma_wait, _dma_t0);
+
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	/* Release the DMA engine for the next slow-path or fast-in user. */
+	k_sem_give(&priv->dma_arbiter);
+#endif
 	if (err != 0) {
 		err = -EIO;
 
@@ -1141,7 +1470,295 @@ static int numaker_hsusbd_ep_xfer_user_dma(struct numaker_usbd_ep *ep_cur, uint8
 
 	return err;
 }
+
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+/* Arm a single MPS-or-shorter DMA chunk on an IN bulk EP.  Caller is
+ * responsible for ensuring no other DMA is in flight, the EP FIFO is
+ * empty, and the cache has been flushed for the chunk's bytes.  This
+ * runs in IRQ context (TXPKIF ISR re-arming) and from thread context
+ * (initial fast-in start). */
+/* Arm a single DMA chunk; the bus-IRQ DMADONEIF handler does the
+ * post-DMA work (SHORTTXEN apply, EPINTEN re-enable).
+ *
+ *   1. Clear stale DMADONEIF
+ *   2. Program addr/cnt/direction
+ *   3. Disable BUFEMPTYIEN/TXPKIEN so no spurious IRQ fires while DMA
+ *      is in progress (DMADONEIF handler re-enables them)
+ *   4. ENABLE_DMA and return
+ *
+ * Earlier (2026-04-26 morning) this function did the full cycle inline
+ * including a busy-wait on DMAEN auto-clear, on the theory that the
+ * deferred-DMADONEIF design had a timing gap that triggered an HW
+ * corner case at large arm sizes.  Per-thread profiling later
+ * that day showed the busy-wait was burning ~45% of total CPU on the
+ * driver thread during all-64-ch @ 200 kHz; testing the deferred design
+ * with no settle delay at all then showed it ALSO passes both
+ * iworx_acq's heavy ramp config AND every usb_throughput_test gappy
+ * pattern (which were the original wedge reproducers).  See
+ * `memory/project_fastin_inline_dma_done.md` for the post-mortem — the
+ * original wedge attribution was wrong; the wedge was already fixed by
+ * the other changes that landed alongside (SHORTTXEN ordering in
+ * fastin_pick_chunk, EPINTSTS clear at fastin_start, buf->size vs
+ * buf->len in iworx_usb_acq).
+ */
+static inline void numaker_hsusbd_fastin_arm_chunk(const struct device *dev,
+						   uint8_t ep, uint8_t *ptr,
+						   uint32_t chunk)
+{
+	const struct udc_numaker_config *config = dev->config;
+	struct udc_numaker_data *priv = udc_get_private(dev);
+	HSUSBD_T *base = config->base;
+	HSUSBD_EP_T *ep_base = numaker_usbd_ep_base(dev, priv->fastin.ep_hw_idx);
+
+	/* Clear the previous DMA-done flag.  No DMARST: mid-stream DMARST
+	 * leaves the HSUSBD EP DMA path in a bad state when DMACNT is a
+	 * multi-MPS amount.  The M48x MassStorage HAL example just
+	 * programs the new DMA without a reset between chunks. */
+	base->BUSINTSTS = HSUSBD_BUSINTSTS_DMADONEIF_Msk;
+
+	base->DMAADDR = (uint32_t)ptr;
+	base->DMACNT = chunk;
+	base->DMACTL = HSUSBD_DMACTL_SVINEP_Msk | HSUSBD_DMACTL_DMARD_Msk |
+		       (USB_EP_GET_IDX(ep) << HSUSBD_DMACTL_EPNUM_Pos);
+
+	ep_base->EPINTEN &= ~(HSUSBD_EPINTEN_BUFEMPTYIEN_Msk |
+			      HSUSBD_EPINTEN_TXPKIEN_Msk);
+
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+	atomic_set(&s_fastin_dma_arm_ts, k_cycle_get_32());
 #endif
+	base->DMACTL |= HSUSBD_DMACTL_DMAEN_Msk;
+}
+
+/* If the chunk we just armed is < MPS, we need SHORTTXEN so the HSUSBD
+ * sends a short packet rather than waiting for MPS bytes.  Set this
+ * BEFORE re-enabling TXPKIEN. */
+static inline void numaker_hsusbd_fastin_set_shortx(const struct device *dev,
+						    struct numaker_usbd_ep *ep_cur,
+						    uint32_t chunk)
+{
+	HSUSBD_EP_T *ep_base = numaker_usbd_ep_base(dev, ep_cur->ep_hw_idx);
+
+	if (chunk == 0) {
+		uint32_t r = ep_base->EPRSPCTL & ~HSUSBD_EPRSPCTL_TOGGLE_Msk;
+
+		ep_base->EPRSPCTL = r | HSUSBD_EP_RSPCTL_ZEROLEN;
+	} else if (chunk < ep_cur->mps) {
+		uint32_t r = ep_base->EPRSPCTL & ~HSUSBD_EPRSPCTL_TOGGLE_Msk;
+
+		ep_base->EPRSPCTL = r | HSUSBD_EP_RSPCTL_SHORTTXEN;
+	}
+}
+
+/* Begin fast-in pumping for a freshly-dequeued IN URB.  Called from the
+ * UDC thread (numaker_usbd_xfer_in).  The first DMA arm is sized for the
+ * whole URB (minus any sub-MPS tail that fastin_pick_chunk strips into
+ * its own arm); the HSUSBD's pause-on-FIFO-full mechanism handles arm
+ * sizes much larger than the EP FIFO transparently.  Sub-MPS tails and
+ * BUFEMPTYIF re-arms are handled in the TXPKIF ISR. */
+static int numaker_hsusbd_fastin_start(const struct device *dev,
+				       struct numaker_usbd_ep *ep_cur,
+				       struct net_buf *buf)
+{
+	const struct udc_numaker_config *config = dev->config;
+	struct udc_numaker_data *priv = udc_get_private(dev);
+	struct udc_ep_config *ep_cfg = udc_get_ep_cfg(dev, ep_cur->addr);
+	uint32_t total = buf->len;
+	uint32_t mps = ep_cur->mps;
+	uint32_t chunk;
+
+	__ASSERT_NO_MSG(total > 0);
+	__ASSERT_NO_MSG(!priv->fastin.active);
+
+	/* Wait for any concurrent slow-path DMA on another EP to finish
+	 * before claiming the (single) HSUSBD DMA engine. */
+	k_sem_take(&priv->dma_arbiter, K_FOREVER);
+
+	chunk = fastin_pick_chunk(total, mps);
+
+	/* One cache flush for the full URB, not per chunk.  Cheap on M4
+	 * (no D-cache) but architecturally correct. */
+	sys_cache_data_flush_range(buf->data, total);
+
+	priv->fastin.ep = ep_cur->addr;
+	priv->fastin.ep_hw_idx = ep_cur->ep_hw_idx;
+	priv->fastin.next_ptr = buf->data + chunk;
+	priv->fastin.remaining = total - chunk;
+	priv->fastin.total_len = total;
+	priv->fastin.mps = mps;
+	priv->fastin.pkts_in_flight = 0;  /* unused — kept for compatibility */
+	priv->fastin.buf = buf;
+	priv->fastin.shortx_pending = false;
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+	atomic_set(&s_fastin_last_txpkif_ts, 0);
+#endif
+	/* All other fields populated — publish active=true LAST so any
+	 * concurrent ISR observer sees a consistent state. */
+	compiler_barrier();
+	priv->fastin.active = true;
+
+	udc_ep_set_busy(ep_cfg, true);
+
+	/* If the first chunk is the only one AND its tail is < MPS, defer
+	 * SHORTTXEN until DMA-done IRQ — see fastin.shortx_pending comment.
+	 * Setting it here would race with HW transmitting a spurious
+	 * 0-byte packet on the still-empty FIFO. */
+	if (priv->fastin.remaining == 0 && (chunk % mps) != 0) {
+		priv->fastin.shortx_pending = true;
+	}
+
+	{
+		HSUSBD_EP_T *ep_base = numaker_usbd_ep_base(dev,
+				ep_cur->ep_hw_idx);
+
+		/* Clean state from any prior URB on this EP (slow path or
+		 * previous fast-in).  Latched EPINTSTS bits + leftover FIFO
+		 * data can wedge the very first fast-in URB after a
+		 * slow-path config (reliably reproduced transitioning from
+		 * ch0 @ 10 kHz → all-usb-ch @ 100 kHz).
+		 *
+		 * 1. Clear all latched EPINTSTS bits (write-1-to-clear).
+		 * 2. Clear stale SHORTTXEN/ZEROLEN in EPRSPCTL and FLUSH
+		 *    the EP FIFO so the new URB starts with an empty pipe. */
+		ep_base->EPINTSTS = ep_base->EPINTSTS;
+		{
+			uint32_t r = ep_base->EPRSPCTL & ~HSUSBD_EPRSPCTL_TOGGLE_Msk;
+			r &= ~(HSUSBD_EP_RSPCTL_SHORTTXEN |
+			       HSUSBD_EP_RSPCTL_ZEROLEN);
+			ep_base->EPRSPCTL = r | HSUSBD_EPRSPCTL_FLUSH_Msk;
+		}
+
+#if defined(CONFIG_IWORX_USB_ACQ_PROBE)
+		/* Diagnostic: capture EPDATCNT (= bytes currently in EP
+		 * FIFO) right before DMA arm.  Captured across the first 8
+		 * fastin starts since boot.  Run on hardware 2026-04-30:
+		 * all captures showed 0 — the FIFO IS being flushed by the
+		 * EPRSPCTL FLUSH bit.  The host-side seed-offset corruption
+		 * is therefore NOT residual FIFO data but something
+		 * downstream in the DMA->FIFO->USB pipeline. */
+		extern volatile uint32_t g_iwacq_fastin_epdatcnt[8];
+		extern volatile uint8_t  g_iwacq_fastin_epdatcnt_idx;
+		uint8_t pi = g_iwacq_fastin_epdatcnt_idx;
+		if (pi < 8) {
+			g_iwacq_fastin_epdatcnt[pi] = ep_base->EPDATCNT;
+			g_iwacq_fastin_epdatcnt_idx = pi + 1;
+		}
+#endif
+
+		/* Per the M48x MSC HAL example: enable TXPKIEN before
+		 * arming DMA — HSUSBD won't auto-flow packets out of the
+		 * MPS-sized FIFO until TXPKIEN is on.  BUFEMPTYIEN is
+		 * deliberately NOT enabled here: the FIFO is empty until
+		 * DMA writes the first MPS bytes, so BUFEMPTYIF would
+		 * fire spuriously.  DMA-done IRQ enables BUFEMPTYIEN once
+		 * the chunk is staged. */
+		ep_base->EPINTEN |= HSUSBD_EPINTEN_TXPKIEN_Msk;
+		ep_base->EPINTEN &= ~HSUSBD_EPINTEN_BUFEMPTYIEN_Msk;
+	}
+
+	numaker_hsusbd_fastin_arm_chunk(dev, ep_cur->addr, buf->data, chunk);
+	return 0;
+}
+#endif /* CONFIG_UDC_NUMAKER_FAST_IN */
+#endif /* CONFIG_UDC_NUMAKER_DMA */
+
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+/* Single-EP state dumper — invoked from app shell after a wedge so we can
+ * see whether fast-in is "active" with no IRQ progress, what the FIFO and
+ * EPINTSTS look like, and whether DMA is mid-transfer. */
+/* Walk the k_fifo of buffers queued at the UDC layer for ep_cfg and
+ * return the count.  Safe to call from ISR — k_queue's underlying
+ * sys_sflist can be walked while holding only the queue's own spinlock
+ * which is taken briefly. */
+static uint32_t numaker_ep_queue_depth(struct udc_ep_config *ep_cfg)
+{
+	if (ep_cfg == NULL) {
+		return 0;
+	}
+	uint32_t n = 0;
+	struct k_queue *q = &ep_cfg->fifo._queue;
+	k_spinlock_key_t key = k_spin_lock(&q->lock);
+	sys_sfnode_t *node;
+	SYS_SFLIST_FOR_EACH_NODE(&q->data_q, node) {
+		n++;
+	}
+	k_spin_unlock(&q->lock, key);
+	return n;
+}
+
+void udc_numaker_dump_state(const struct device *dev)
+{
+	const struct udc_numaker_config *config = dev->config;
+
+	if (!config->is_hsusbd) {
+		printk("[udc_dump] not HSUSBD — no state to dump\n");
+		return;
+	}
+
+	HSUSBD_T *base = config->base;
+
+	printk("[udc_dump] BUSINTSTS=%08lx GINTSTS=%08lx DMACTL=%08lx "
+	       "DMACNT=%lu\n",
+	       (unsigned long)base->BUSINTSTS,
+	       (unsigned long)base->GINTSTS,
+	       (unsigned long)base->DMACTL,
+	       (unsigned long)base->DMACNT);
+
+	/* Per-EP register state for every valid EP in the pool.  Includes
+	 * EPCFG (en/dir/num), EPINTSTS (status flags), EPRSPCTL (control:
+	 * SHORTTXEN/ZEROLEN/HALT/etc), EPDATCNT (bytes currently in FIFO),
+	 * EPMPS (max packet), and the count of net_bufs queued at the UDC
+	 * layer for that EP (URBs waiting for the driver to xfer_in/out).
+	 *
+	 * `qdepth` tells us if URBs are sitting at the UDC layer waiting
+	 * for the driver to act on them — the smoking-gun indicator for
+	 * the start-of-recording wedge where iworx_acq has 16 URBs queued
+	 * but `fastin active=0` and `cok=0`. */
+	struct udc_numaker_data *priv = udc_get_private(dev);
+	struct numaker_usbd_ep *ep_cur = priv->ep_pool;
+	struct numaker_usbd_ep *ep_end = priv->ep_pool + priv->ep_pool_size;
+	for (; ep_cur != ep_end; ep_cur++) {
+		if (!ep_cur->valid || !ep_cur->addr_valid) {
+			continue;
+		}
+		if (ep_cur->ep_hw_idx == CEP) {
+			printk("[udc_dump] CEP CEPCTL=%08lx CEPINTSTS=%08lx "
+			       "CEPINTEN=%08lx CEPDATCNT=%lu\n",
+			       (unsigned long)base->CEPCTL,
+			       (unsigned long)base->CEPINTSTS,
+			       (unsigned long)base->CEPINTEN,
+			       (unsigned long)base->CEPDATCNT);
+			continue;
+		}
+		HSUSBD_EP_T *ep_base =
+			numaker_usbd_ep_base(dev, ep_cur->ep_hw_idx);
+		struct udc_ep_config *ep_cfg = udc_get_ep_cfg(dev, ep_cur->addr);
+		uint32_t qd = numaker_ep_queue_depth(ep_cfg);
+		printk("[udc_dump] EP%02x hwidx=%ld EPCFG=%08lx "
+		       "EPINTSTS=%08lx EPRSPCTL=%08lx EPDATCNT=%lu "
+		       "EPMPS=%lu qdepth=%lu\n",
+		       (unsigned)ep_cur->addr,
+		       (long)ep_cur->ep_hw_idx,
+		       (unsigned long)ep_base->EPCFG,
+		       (unsigned long)ep_base->EPINTSTS,
+		       (unsigned long)ep_base->EPRSPCTL,
+		       (unsigned long)ep_base->EPDATCNT,
+		       (unsigned long)ep_base->EPMPS,
+		       (unsigned long)qd);
+	}
+
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	printk("[udc_dump] fastin active=%d ep=%02x hw_idx=%lu "
+	       "remaining=%lu total=%lu mps=%lu\n",
+	       (int)priv->fastin.active,
+	       priv->fastin.ep,
+	       (unsigned long)priv->fastin.ep_hw_idx,
+	       (unsigned long)priv->fastin.remaining,
+	       (unsigned long)priv->fastin.total_len,
+	       (unsigned long)priv->fastin.mps);
+#endif
+}
+#endif /* CONFIG_UDC_NUMAKER_PROBE */
 
 /* Copy data to user buffer
  *
@@ -1167,7 +1784,7 @@ static int numaker_hsusbd_ep_copy_to_user(struct numaker_usbd_ep *ep_cur, uint8_
 		}
 
 		// Flush anything remaining
-		base->CEPCTL |= HSUSBD_CEPCTL_FLUSH;
+		// base->CEPCTL |= HSUSBD_CEPCTL_FLUSH;
 
 		*size -= rmn;
 	} else {
@@ -1214,9 +1831,6 @@ static int numaker_hsusbd_ep_copy_from_user(struct numaker_usbd_ep *ep_cur, cons
 			base->CEPDAT_BYTE = *usrbuf_pos++;
 			rmn--;
 		}
-
-		// Flush anything remaining
-		base->CEPCTL |= HSUSBD_CEPCTL_FLUSH;
 
 		*size -= rmn;
 	} else {
@@ -1367,6 +1981,90 @@ static void numaker_usbd_ep_config_dmabuf(struct numaker_usbd_ep *ep_cur, uint32
 	ep_cur->dmabuf_size = dmabuf_size;
 }
 
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+/* Tear down a stranded fast-in URB and release the DMA arbiter.
+ *
+ * In normal operation a fast-in URB completes when BUFEMPTYIF fires
+ * after HW finishes transmitting the last chunk; that ISR branch clears
+ * fastin.active and gives back dma_arbiter.  But if the host stops
+ * reading bulk-IN (or the EP is being torn down, or bus reset occurs),
+ * BUFEMPTYIF never fires — the URB stays "active" forever, the arbiter
+ * stays held, and the next slow-path or fast-in DMA user blocks.
+ *
+ * @param dev    UDC device
+ * @param ep     EP address to tear down, or NUMAKER_FASTIN_TEARDOWN_ANY
+ *               to tear down whatever is active.  Note that 0x00 is the
+ *               CTRL-OUT EP address and IS valid input — passing 0 here
+ *               would NOT match "any", it'd match only EP 0x00.
+ *
+ * Safe to call when fast-in is idle or owned by a different EP — does
+ * nothing in those cases. */
+static void numaker_hsusbd_fastin_teardown(const struct device *dev, uint8_t ep)
+{
+	struct udc_numaker_data *priv = udc_get_private(dev);
+	const struct udc_numaker_config *config = dev->config;
+	HSUSBD_T *base = config->base;
+	HSUSBD_EP_T *ep_base;
+	unsigned int key;
+
+	/* Uncontended fast-path check.  Re-checked under irq_lock below. */
+	if (!priv->fastin.active) {
+		return;
+	}
+	if (ep != NUMAKER_FASTIN_TEARDOWN_ANY && priv->fastin.ep != ep) {
+		return;
+	}
+
+	ep_base = numaker_usbd_ep_base(dev, priv->fastin.ep_hw_idx);
+
+
+	/* Mask the EP-level IRQs that drive the chained re-arm so the ISR's
+	 * fast-in branch can no longer fire for this URB. */
+	ep_base->EPINTEN &= ~(HSUSBD_EPINTEN_TXPKIEN_Msk |
+			      HSUSBD_EPINTEN_BUFEMPTYIEN_Msk);
+
+	key = irq_lock();
+
+	/* Re-check under lock — the ISR may have completed the URB while we
+	 * were masking, in which case it already gave the arbiter and we
+	 * must not give it again. */
+	if (!priv->fastin.active ||
+	    (ep != NUMAKER_FASTIN_TEARDOWN_ANY && priv->fastin.ep != ep)) {
+		irq_unlock(key);
+		return;
+	}
+
+	/* Abort any DMA still in flight for this URB before releasing the
+	 * arbiter — otherwise the next user could arm DMA on top of this
+	 * one's tail. */
+	base->DMACNT = 0;
+	base->DMACTL = HSUSBD_DMACTL_DMARST_Msk;
+	base->DMACTL = 0;
+	base->BUSINTSTS = HSUSBD_BUSINTSTS_DMADONEIF_Msk;
+
+	priv->fastin.active = false;
+	priv->fastin.shortx_pending = false;
+	priv->fastin.buf = NULL;
+	priv->fastin.remaining = 0;
+	priv->fastin.total_len = 0;
+
+	/* Drop any pending DMA-done so the next slow-path k_sem_take starts
+	 * clean. */
+	k_sem_reset(&priv->sem_dma_done);
+
+	/* Release the arbiter — matched 1:1 with the take in
+	 * numaker_hsusbd_fastin_start(). */
+	k_sem_give(&priv->dma_arbiter);
+
+	irq_unlock(key);
+
+	/* The buf itself is still in the EP's UDC queue (fast-in only
+	 * peeked it).  Whoever called this — dequeue, ep_disable, bus reset
+	 * — is responsible for draining the queue via udc_ep_cancel_queued
+	 * or equivalent.  We don't touch the buf here. */
+}
+#endif
+
 static void numaker_usbd_ep_abort(struct numaker_usbd_ep *ep_cur, bool excl_ctrl)
 {
 	struct udc_ep_config *ep_cfg;
@@ -1377,6 +2075,14 @@ static void numaker_usbd_ep_abort(struct numaker_usbd_ep *ep_cur, bool excl_ctrl
 		HSUSBD_T *base = config->base;
 		HSUSBD_EP_T *ep_base = numaker_usbd_ep_base(dev, ep_cur->ep_hw_idx);
 
+		/* If a fast-in URB owns this EP, tear it down first.  Without
+		 * this, the EP-FIFO flush below would orphan an active fast-in
+		 * URB (BUFEMPTYIF never fires, arbiter stays held, all
+		 * subsequent DMA hangs). */
+		if (ep_cur->addr_valid) {
+			numaker_hsusbd_fastin_teardown(dev, ep_cur->addr);
+		}
+
 		/* For HSUSBD, there is no control for aborting EP on-going
 		 * transaction, but there is related control of flush EP FIFO.
 		 */
@@ -1386,12 +2092,28 @@ static void numaker_usbd_ep_abort(struct numaker_usbd_ep *ep_cur, bool excl_ctrl
 				base->CEPCTL = HSUSBD_CEPCTL_FLUSH | HSUSBD_CEPCTL_NAKCLR_Msk;
 			}
 		} else {
-			/* Flush EP FIFO */
+			/* Flush EP FIFO and clear stale state so the next URB
+			 * starts from a clean slate.  Without this, latched
+			 * EPINTSTS bits (especially after a fast-in URB with a
+			 * sub-MPS final chunk) interact with the next URB's
+			 * startup and can cause the new fast-in to never
+			 * complete on certain rate/channel-count configs.
+			 *
+			 * Note: this path only fires reliably on stop after
+			 * the patched udc_common.c always-call-ep_dequeue
+			 * change (formerly the empty-SW-FIFO early-return
+			 * skipped the driver's flush, which was the root cause
+			 * of the iworx_acq seed-offset symptom). */
 			uint32_t eprspctl = ep_base->EPRSPCTL;
 
 			eprspctl &= ~HSUSBD_EPRSPCTL_TOGGLE_Msk;
+			eprspctl &= ~(HSUSBD_EP_RSPCTL_SHORTTXEN |
+				      HSUSBD_EP_RSPCTL_ZEROLEN);
 			eprspctl |= HSUSBD_EP_RSPCTL_FLUSH;
 			ep_base->EPRSPCTL = eprspctl;
+
+			/* Clear all latched IRQ status bits (W1C). */
+			ep_base->EPINTSTS = ep_base->EPINTSTS;
 		}
 	} else {
 		USBD_EP_T *ep_base = numaker_usbd_ep_base(dev, ep_cur->ep_hw_idx);
@@ -1574,6 +2296,12 @@ static void numaker_hsusbd_ep_disable(struct numaker_usbd_ep *ep_cur)
 	HSUSBD_T *base = config->base;
 	HSUSBD_EP_T *ep_base = numaker_usbd_ep_base(dev, ep_cur->ep_hw_idx);
 
+	/* Release any fast-in URB owning this EP before pulling its IRQs
+	 * out from under the in-IRQ DMA chain. */
+	if (ep_cur->addr_valid) {
+		numaker_hsusbd_fastin_teardown(dev, ep_cur->addr);
+	}
+
 	if (ep_cur->ep_hw_idx == CEP) {
 		/* CEP global interrupt shouldn't get disabled for resident. */
 	} else {
@@ -1658,6 +2386,7 @@ static void numaker_usbd_ep_trigger(struct numaker_usbd_ep *ep_cur, uint32_t len
 	struct udc_ep_config *ep_cfg;
 	const struct device *dev = ep_cur->dev;
 	const struct udc_numaker_config *config = dev->config;
+	UDC_PROBE_T0(_trig_t0);
 
 	__ASSERT_NO_MSG(ep_cur->addr_valid);
 
@@ -1671,6 +2400,7 @@ static void numaker_usbd_ep_trigger(struct numaker_usbd_ep *ep_cur, uint32_t len
 
 		ep_base->MXPLD = len;
 	}
+	UDC_PROBE_REC(p_trigger, _trig_t0);
 }
 
 static struct numaker_usbd_ep *numaker_usbd_ep_mgmt_alloc_ep(const struct device *dev)
@@ -2001,6 +2731,7 @@ static int numaker_usbd_xfer_in(const struct device *dev, uint8_t ep, bool stric
 	struct numaker_usbd_ep *ep_cur;
 	struct udc_ep_config *ep_cfg;
 	uint32_t data_len;
+	UDC_PROBE_T0(_xfr_t0);
 
 	if (!USB_EP_DIR_IS_IN(ep)) {
 		LOG_ERR("Invalid EP address 0x%02x for data in", ep);
@@ -2023,7 +2754,6 @@ static int numaker_usbd_xfer_in(const struct device *dev, uint8_t ep, bool stric
 			LOG_ERR("No buffer queued for EP 0x%02x", ep);
 			return -ENODATA;
 		}
-
 		return 0;
 	}
 
@@ -2035,6 +2765,34 @@ static int numaker_usbd_xfer_in(const struct device *dev, uint8_t ep, bool stric
 	}
 
 	data_len = buf->len;
+
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	{
+		const struct udc_numaker_config *_cfg = dev->config;
+		struct udc_numaker_data *_priv = udc_get_private(dev);
+
+		/* Fast-in is for HSUSBD bulk EPs only.  CEP uses CEPDAT_BYTE
+		 * PIO and a different ISR path; let it use the slow path.
+		 *
+		 * Sub-MPS URBs also go via the slow path: fast-in's chained
+		 * BUFEMPTYIF/SHORTTXIF completion is unreliable when the
+		 * entire URB fits in one short packet — HW often transmits
+		 * the packet before DMADONEIF is delivered, so the
+		 * edge-triggered completion IRQ is missed and the URB hangs.
+		 * The slow path is synchronous and works correctly for any
+		 * size, at the cost of one extra DMA wait per URB. */
+		if (_cfg->is_hsusbd && ep_cur->ep_hw_idx != CEP &&
+		    data_len >= ep_cur->mps && !_priv->fastin.active) {
+			err = numaker_hsusbd_fastin_start(dev, ep_cur, buf);
+			if (err == 0) {
+				UDC_PROBE_REC(p_xfer_in, _xfr_t0);
+				return 0;
+			}
+			/* Fall back to slow path on error. */
+		}
+	}
+#endif
+
 	if (data_len) {
 		err = numaker_usbd_ep_copy_from_user(ep_cur, buf->data, &data_len);
 		if (err < 0) {
@@ -2051,6 +2809,7 @@ static int numaker_usbd_xfer_in(const struct device *dev, uint8_t ep, bool stric
 
 	numaker_usbd_ep_trigger(ep_cur, data_len);
 
+	UDC_PROBE_REC(p_xfer_in, _xfr_t0);
 	return 0;
 }
 
@@ -2295,9 +3054,20 @@ static int numaker_usbd_msg_handle_in(const struct device *dev, struct numaker_u
 	uint8_t ep;
 	struct numaker_usbd_ep *ep_cur;
 	struct udc_ep_config *ep_cfg;
+	// struct udc_data *data = dev->data;
 	struct net_buf *buf;
+	UDC_PROBE_T0(_h_t0);
 
 	__ASSERT_NO_MSG(msg->type == NUMAKER_USBD_MSG_TYPE_IN);
+
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+	{
+		uint32_t isr_ts = (uint32_t)atomic_set(&s_isr_in_ts, 0);
+		if (isr_ts) {
+			udc_probe_record(&p_isr_to_handle, _h_t0 - isr_ts);
+		}
+	}
+#endif
 
 	ep = msg->in.ep;
 	ep_cfg = udc_get_ep_cfg(dev, ep);
@@ -2336,6 +3106,7 @@ xfer_next:
 		numaker_usbd_xfer_in(dev, ep, false);
 	}
 
+	UDC_PROBE_REC(p_handle_in, _h_t0);
 	return 0;
 }
 
@@ -2538,11 +3309,19 @@ __maybe_unused static void numaker_usbd_isr(const struct device *dev)
 	if (usbd_intsts & USBD_INTSTS_USB) {
 		uint32_t epintsts;
 
+#if NUMAKER_USBD_USE_EPINTSTS
 		/* EP events */
 		epintsts = base->EPINTSTS;
 
 		/* Clear event flag */
 		base->EPINTSTS = epintsts;
+#else
+		// Get endpoint status from INTSTS (12 bits are available for this purpose)
+		epintsts = (base->INTSTS >> USBD_INTSTS_EPEVT0_Pos) & BIT_MASK(12);
+		
+		// Clear EP interrupts
+		base->INTSTS = (epintsts << USBD_INTSTS_EPEVT0_Pos);
+#endif
 
 		while (epintsts) {
 			uint32_t ep_hw_idx = u32_count_trailing_zeros(epintsts);
@@ -2631,7 +3410,50 @@ __maybe_unused static void numaker_hsusbd_isr(const struct device *dev)
 	/* DMA done */
 #if defined(CONFIG_UDC_NUMAKER_DMA)
 	if (busintsts & HSUSBD_BUSINTSTS_DMADONEIF_Msk) {
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+		if (priv->fastin.active) {
+			/* DMA finished loading the chunk into the FIFO.
+			 * Apply SHORTTXEN if the chunk's tail is sub-MPS,
+			 * then re-enable BUFEMPTYIEN/TXPKIEN so we get the
+			 * chunk-drained IRQ when HW finishes pushing the
+			 * FIFO out the wire.  No settle delay is needed —
+			 * we measured 0 ns vs. 500 ns vs. 2 µs and all
+			 * three pass both iworx_acq and usb_throughput_test
+			 * with comparable throughput. */
+			HSUSBD_EP_T *_eb = numaker_usbd_ep_base(dev,
+						priv->fastin.ep_hw_idx);
+
+			/* Apply SHORTTXEN now that the FIFO holds the
+			 * full short-chunk data — see fastin.shortx_pending
+			 * comment.  Per the Nuvoton MSC HAL example, SHORTTXEN
+			 * must be programmed AFTER DMA-done so HW doesn't
+			 * burn the bit on a spurious 0-byte packet against
+			 * an empty FIFO. */
+			if (priv->fastin.shortx_pending) {
+				uint32_t _r = _eb->EPRSPCTL &
+					      ~HSUSBD_EPRSPCTL_TOGGLE_Msk;
+				_eb->EPRSPCTL = _r | HSUSBD_EP_RSPCTL_SHORTTXEN;
+				priv->fastin.shortx_pending = false;
+			}
+
+			_eb->EPINTEN |= HSUSBD_EPINTEN_BUFEMPTYIEN_Msk |
+					HSUSBD_EPINTEN_TXPKIEN_Msk;
+#if defined(CONFIG_UDC_NUMAKER_PROBE)
+			{
+				uint32_t arm_ts = (uint32_t)atomic_set(
+					&s_fastin_dma_arm_ts, 0);
+				if (arm_ts) {
+					udc_probe_record(&p_fastin_dma,
+						k_cycle_get_32() - arm_ts);
+				}
+			}
+#endif
+		} else {
+			k_sem_give(&priv->sem_dma_done);
+		}
+#else
 		k_sem_give(&priv->sem_dma_done);
+#endif
 	}
 #endif
 
@@ -2764,6 +3586,28 @@ static int udc_numaker_ep_clear_halt(const struct device *dev, struct udc_ep_con
 	return 0;
 }
 
+/* Look up the bulk FIFO depth (in MPS-sized packets) for ep_addr in
+ * the DT-supplied bulk-ep-buf-packets table.  Returns 1 if the EP is
+ * not listed (= MPS-only buffer, the original behaviour).
+ */
+static uint16_t numaker_ep_buf_packets_lookup(const struct udc_numaker_config *config,
+					      uint8_t ep_addr)
+{
+	if (!config->ep_buf_packets || config->ep_buf_packets_len < 2) {
+		return 1;
+	}
+
+	for (uint32_t i = 0; i + 1 < config->ep_buf_packets_len; i += 2) {
+		if ((uint8_t)config->ep_buf_packets[i] == ep_addr) {
+			uint16_t pkts = config->ep_buf_packets[i + 1];
+
+			return pkts ? pkts : 1;
+		}
+	}
+
+	return 1;
+}
+
 static int udc_numaker_ep_enable(const struct device *dev, struct udc_ep_config *const ep_cfg)
 {
 	const struct udc_numaker_config *config = dev->config;
@@ -2783,9 +3627,37 @@ static int udc_numaker_ep_enable(const struct device *dev, struct udc_ep_config 
 
 	/* Configure EP DMA buffer */
 	if (!ep_cur->dmabuf_valid || ep_cur->dmabuf_size < ep_cfg->mps) {
-		/* Allocate DMA buffer */
-		err = numaker_usbd_ep_mgmt_alloc_dmabuf(dev, ep_cfg->mps, &dmabuf_base,
+		uint32_t req_size = ep_cfg->mps;
+
+		/* Per-EP bulk FIFO depth from DT.  Only bulk-IN benefits —
+		 * fast-in pipelines DMA fill with USB tx through a
+		 * multi-packet FIFO.  Bulk-OUT just receives, where a deeper
+		 * FIFO doesn't help, so leave it at MPS to conserve the
+		 * limited HSUSBD pool. */
+		if (config->is_hsusbd &&
+		    (ep_cfg->attributes & USB_EP_TRANSFER_TYPE_MASK) ==
+		    USB_EP_TYPE_BULK &&
+		    USB_EP_DIR_IS_IN(ep_cfg->addr)) {
+			uint16_t pkts =
+				numaker_ep_buf_packets_lookup(config, ep_cfg->addr);
+
+			if (pkts > 1) {
+				req_size = ep_cfg->mps * pkts;
+			}
+		}
+
+		/* Allocate DMA buffer.  If the enlarged request won't fit,
+		 * fall back to a single-MPS buffer so the EP still works. */
+		err = numaker_usbd_ep_mgmt_alloc_dmabuf(dev, req_size, &dmabuf_base,
 							&dmabuf_size);
+		if (err < 0 && req_size > ep_cfg->mps) {
+			LOG_WRN("ep 0x%02x: %u-byte FIFO didn't fit; "
+				"falling back to MPS",
+				ep_cfg->addr, req_size);
+			err = numaker_usbd_ep_mgmt_alloc_dmabuf(dev, ep_cfg->mps,
+								&dmabuf_base,
+								&dmabuf_size);
+		}
 		if (err < 0) {
 			LOG_ERR("Allocate DMA buffer failed");
 			return err;
@@ -2946,7 +3818,11 @@ static void udc_numaker_hsusbd_init_int_early(const struct device *dev)
 	}
 
 	/* Enable USB wake-up early */
+	#if defined(CONFIG_SOC_SERIES_M48X)
+	base->PHYCTL |= HSUSBD_PHYCTL_WKEN_Msk;
+	#else
 	base->PHYCTL |= HSUSBD_PHYCTL_VBUSWKEN_Msk;
+	#endif
 }
 
 static int udc_numaker_init(const struct device *dev)
@@ -3101,6 +3977,9 @@ static int udc_numaker_driver_preinit(const struct device *dev)
 
 #if defined(CONFIG_UDC_NUMAKER_DMA)
 	k_sem_init(&priv->sem_dma_done, 0, 1);
+#if defined(CONFIG_UDC_NUMAKER_FAST_IN)
+	k_sem_init(&priv->dma_arbiter, 1, 1);  /* binary mutex, initially free */
+#endif
 #endif
 
 	k_event_init(&priv->events);
@@ -3180,6 +4059,9 @@ static const struct udc_api udc_numaker_api = {
 	static struct udc_ep_config                                                                \
 		ep_cfg_in_##inst[MIN(DT_INST_PROP(inst, num_bidir_endpoints), 16)];                \
                                                                                                    \
+	static const uint16_t udc_numaker_ep_buf_packets_##inst[] =                                \
+		DT_INST_PROP_OR(inst, bulk_ep_buf_packets, {0});                                   \
+                                                                                                   \
 	static const struct udc_numaker_config udc_numaker_config_##inst = {                       \
 		.ep_cfg_out = ep_cfg_out_##inst,                                                   \
 		.ep_cfg_in = ep_cfg_in_##inst,                                                     \
@@ -3203,6 +4085,9 @@ static const struct udc_api udc_numaker_api = {
 		.speed_idx = DT_ENUM_IDX_OR(DT_DRV_INST(inst), maximum_speed,                      \
 					    UDC_NUMAKER_SPEED_IDX_DEFAULT),                        \
 		.is_hsusbd = IS_ENABLED(UDC_NUMAKER_DEVICE_HSUSBD),                                \
+		.ep_buf_packets = udc_numaker_ep_buf_packets_##inst,                               \
+		.ep_buf_packets_len =                                                              \
+			DT_INST_PROP_LEN_OR(inst, bulk_ep_buf_packets, 0),                         \
 	};                                                                                         \
                                                                                                    \
 	static struct numaker_usbd_ep                                                              \
