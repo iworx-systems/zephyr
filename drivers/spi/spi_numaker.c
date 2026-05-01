@@ -160,7 +160,6 @@ static int spi_numaker_configure(const struct device *dev, const struct spi_conf
 		uint32_t ss_level = (config->operation & SPI_CS_ACTIVE_HIGH)
 			? SPI_SS_ACTIVE_HIGH : SPI_SS_ACTIVE_LOW;
 		SPI_EnableAutoSS(dev_cfg->spi, SPI_SS, ss_level);
-		LOG_WRN("Enable");
 	} else {
 		/* Disable auto-SS so the hardware SS pin is not driven during
 		 * transfers to GPIO-CS devices.  SPI_DisableAutoSS clears SS
@@ -174,7 +173,6 @@ static int spi_numaker_configure(const struct device *dev, const struct spi_conf
 			? SPI_SS_ACTIVE_HIGH : SPI_SS_ACTIVE_LOW;
 		SPI_EnableAutoSS(dev_cfg->spi, SPI_SS, ss_level);
 		 SPI_DisableAutoSS(dev_cfg->spi);
-		LOG_WRN("Disable");
 	}
 
 	/* Be able to set TX/RX FIFO threshold, for ex: SPI_SetFIFO(dev_cfg->spi, 2, 2) */
@@ -813,9 +811,11 @@ static int spi_numaker_transceive(const struct device *dev, const struct spi_con
 
 	LOG_DBG("%s -->word_size [%d]", __func__, word_size);
 
+#ifdef CONFIG_SPI_ASYNC
 	/* Cache spi_dfs so the async fast-reentry path can use it when the
 	 * bus was locked by a sync transceive (e.g. pre-lock dummy read). */
 	data->spi_dfs = spi_dfs;
+#endif
 
 	SPI_ENABLE(dev_cfg->spi);
 
