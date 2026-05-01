@@ -847,7 +847,10 @@ static int spi_numaker_transceive(const struct device *dev, const struct spi_con
 	}
 
 done:
-	spi_context_release(ctx, ret);
+	/* Don't release if the bus is locked. */
+	if (ret < 0 || !(ctx->config->operation & SPI_LOCK_ON)) {
+		spi_context_release(ctx, ret);
+	}
 	LOG_DBG("%s --> [%d]", __func__, ret);
 	return ret;
 }
@@ -1074,7 +1077,9 @@ static int spi_numaker_transceive_async(const struct device *dev,
 	return 0;
 
 done:
-	spi_context_release(ctx, ret);
+	if (ret < 0 || !(ctx->config->operation & SPI_LOCK_ON)) {
+		spi_context_release(ctx, ret);
+	}
 	return ret;
 }
 #endif /* CONFIG_SPI_ASYNC */
