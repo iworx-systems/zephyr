@@ -41,7 +41,6 @@ config TASK_WDT_MIN_TIMEOUT
 	int "Minimum timeout for task watchdog (ms)"
 	depends on TASK_WDT_HW_FALLBACK
 	default 100
-	range 1 10000
 	help
 	  The task watchdog uses a continuously restarted k_timer as its
 	  backend. This value specifies the minimum timeout in milliseconds
