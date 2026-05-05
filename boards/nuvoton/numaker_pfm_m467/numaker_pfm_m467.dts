@@ -69,6 +69,7 @@
 
 &scc {
 	core-clock = <192000000>;
+	hxt = "enable";
 };
 
 &gpiob {
@@ -126,8 +127,17 @@
 };
 
 /* On enabled, usbd is required to be clocked in 48MHz. */
-zephyr_udc0: &usbd {
-	pinctrl-0 = <&usbd_default>;
-	pinctrl-names = "default";
+// zephyr_udc0: &usbd {
+// 	pinctrl-0 = <&usbd_default>;
+// 	pinctrl-names = "default";
+// 	status = "okay";
+// };
+
+&usbd {
+    status = "disabled";
+};
+
+/* Change to HSUSBD as default */
+zephyr_udc0: &hsusbd {
 	status = "okay";
 };
