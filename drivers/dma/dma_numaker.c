@@ -22,7 +22,8 @@
 LOG_MODULE_REGISTER(dma_numaker, CONFIG_DMA_LOG_LEVEL);
 
 #define NUMAKER_PDMA_MAX_TRANSFER_COUNT 16384U
-#define NUMAKER_PDMA_MAX_BLOCK_COUNT 16U
+#define NUMAKER_PDMA_MAX_BLOCK_COUNT CONFIG_DMA_NUMAKER_MAX_SCATTER_GATHER_COUNT
+#define NUMAKER_PDMA_HAS_SG (NUMAKER_PDMA_MAX_BLOCK_COUNT > 0)
 
 struct dma_numaker_pdma_config {
 	PDMA_T *pdma;
@@ -32,7 +33,9 @@ struct dma_numaker_pdma_config {
 	uint32_t clk_src;
 	uint32_t clk_div;
 	uint8_t channels;
+#if NUMAKER_PDMA_HAS_SG
 	DSCT_T *desc_table;
+#endif
 	void (*irq_config_func)(const struct device *dev);
 };
 
@@ -66,11 +69,13 @@ struct dma_numaker_pdma_data {
 	struct dma_numaker_pdma_channel *channels;
 };
 
+#if NUMAKER_PDMA_HAS_SG
 static DSCT_T *dma_numaker_pdma_desc(const struct dma_numaker_pdma_config *cfg, uint32_t channel,
 				      uint32_t block)
 {
 	return &cfg->desc_table[(channel * NUMAKER_PDMA_MAX_BLOCK_COUNT) + block];
 }
+#endif
 
 static int dma_numaker_pdma_validate_channel(const struct device *dev, uint32_t channel)
 {
@@ -255,6 +260,7 @@ static int dma_numaker_pdma_program(const struct device *dev, uint32_t channel,
 	return 0;
 }
 
+#if NUMAKER_PDMA_HAS_SG
 static int dma_numaker_pdma_setup_scatter(const struct device *dev, uint32_t channel,
 					  struct dma_config *dma_cfg,
 					  struct dma_numaker_pdma_channel *ch_data,
@@ -303,6 +309,7 @@ static int dma_numaker_pdma_setup_scatter(const struct device *dev, uint32_t cha
 
 	return 0;
 }
+#endif /* NUMAKER_PDMA_HAS_SG */
 
 static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 				   struct dma_config *dma_cfg)
@@ -420,8 +427,12 @@ static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 	}
 
 	if (ch_data->scatter_enabled) {
+#if NUMAKER_PDMA_HAS_SG
 		err = dma_numaker_pdma_setup_scatter(dev, channel, dma_cfg, ch_data, burst_type,
 					     burst_size);
+#else
+		return -ENOTSUP;
+#endif
 	} else {
 		if ((dma_cfg->head_block->next_block != NULL) ||
 		    (!dma_cfg->head_block->source_gather_en &&
@@ -640,7 +651,11 @@ static int dma_numaker_pdma_get_attribute(const struct device *dev, uint32_t typ
 		*value = 1U;
 		return 0;
 	case DMA_ATTR_MAX_BLOCK_COUNT:
+#if NUMAKER_PDMA_HAS_SG
 		*value = NUMAKER_PDMA_MAX_BLOCK_COUNT;
+#else
+		*value = 1U;
+#endif
 		return 0;
 	default:
 		return -EINVAL;
@@ -680,6 +695,7 @@ static void dma_numaker_pdma_complete_cb(const struct device *dev, uint32_t flag
 
 		flags &= ~BIT(channel);
 
+#if NUMAKER_PDMA_HAS_SG
 		if ((status >= 0) && ch_data->scatter_enabled && ch_data->complete_callback_en &&
 		    (ch_data->completed_blocks < ch_data->block_count)) {
 			ch_data->completed_blocks++;
@@ -688,6 +704,7 @@ static void dma_numaker_pdma_complete_cb(const struct device *dev, uint32_t flag
 		} else if ((status >= 0) && ch_data->scatter_enabled) {
 			ch_data->completed_blocks = ch_data->block_count;
 		}
+#endif
 
 		if ((ch_data->cb != NULL) && (cb_status >= 0 || !ch_data->error_cb_dis)) {
 			ch_data->cb(dev, ch_data->user_data, channel, cb_status);
@@ -770,7 +787,9 @@ static int dma_numaker_pdma_init(const struct device *dev)
 	(void)reset_line_toggle_dt(&cfg->reset);
 
 	PDMA_Open(cfg->pdma, BIT_MASK(cfg->channels));
+#if NUMAKER_PDMA_HAS_SG
 	cfg->pdma->SCATBA = (uint32_t)(uintptr_t)cfg->desc_table;
+#endif
 	cfg->irq_config_func(dev);
 
 out:
@@ -797,10 +816,20 @@ static DEVICE_API(dma, dma_numaker_pdma_driver_api) = {
 		irq_enable(DT_INST_IRQN(inst));                                                       \
 	}
 
+#if NUMAKER_PDMA_HAS_SG
+#define DMA_NUMAKER_PDMA_DESC_TABLE_DEFINE(inst)                                                  \
+	static DSCT_T dma_numaker_pdma_desc_table_##inst[                                          \
+		DT_INST_PROP(inst, dma_channels) * NUMAKER_PDMA_MAX_BLOCK_COUNT] __aligned(4);
+#define DMA_NUMAKER_PDMA_DESC_TABLE_INIT(inst)                                                    \
+	.desc_table = dma_numaker_pdma_desc_table_##inst,
+#else
+#define DMA_NUMAKER_PDMA_DESC_TABLE_DEFINE(inst)
+#define DMA_NUMAKER_PDMA_DESC_TABLE_INIT(inst)
+#endif
+
 #define DMA_NUMAKER_PDMA_INIT(inst)                                                                 \
 	DMA_NUMAKER_PDMA_IRQ_CONFIG(inst);                                                            \
-	static DSCT_T dma_numaker_pdma_desc_table_##inst[                                          \
-		DT_INST_PROP(inst, dma_channels) * NUMAKER_PDMA_MAX_BLOCK_COUNT] __aligned(4);      \
+	DMA_NUMAKER_PDMA_DESC_TABLE_DEFINE(inst)                                                      \
 	static const struct dma_numaker_pdma_config dma_numaker_pdma_config_##inst = {               \
 		.pdma = (PDMA_T *)DT_INST_REG_ADDR(inst),                                              \
 		.reset = RESET_DT_SPEC_INST_GET(inst),                                                 \
@@ -809,7 +838,7 @@ static DEVICE_API(dma, dma_numaker_pdma_driver_api) = {
 		.clk_src = DT_INST_CLOCKS_CELL(inst, clock_source),                                    \
 		.clk_div = DT_INST_CLOCKS_CELL(inst, clock_divider),                                   \
 		.channels = DT_INST_PROP(inst, dma_channels),                                          \
-		.desc_table = dma_numaker_pdma_desc_table_##inst,                                      \
+		DMA_NUMAKER_PDMA_DESC_TABLE_INIT(inst)                                                 \
 		.irq_config_func = dma_numaker_pdma_irq_config_##inst,                                 \
 	};                                                                                            \
 	static struct dma_numaker_pdma_channel dma_numaker_pdma_channels_##inst[                     \

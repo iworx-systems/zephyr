@@ -8,3 +8,26 @@ config DMA_NUMAKER_PDMA
 	depends on DT_HAS_NUVOTON_NUMAKER_PDMA_ENABLED
 	help
 	  Enable PDMA driver for Nuvoton NuMicro M480 series devices.
+
+if DMA_NUMAKER_PDMA
+
+config DMA_NUMAKER_MAX_SCATTER_GATHER_COUNT
+	int "Max scatter-gather chain depth per channel (0 disables SG)"
+	default 0
+	range 0 16
+	help
+	  Maximum number of blocks in a scatter-gather chain that the
+	  driver will accept on any one channel. Sizes the per-instance
+	  SRAM descriptor table at
+	  dma-channels * DMA_NUMAKER_MAX_SCATTER_GATHER_COUNT * sizeof(DSCT_T).
+
+	  Set to 0 to drop scatter-gather support entirely. With SG
+	  disabled the descriptor table is not allocated, the SCATBA
+	  register write at init is skipped, and any dma_config call with
+	  block_count > 1 returns -ENOTSUP. Apps that only use single-
+	  block transfers (the common case) save dma-channels * 16 *
+	  16 bytes of SRAM by leaving this at 0.
+
+	  The m48x soc is limited to 16 entries.
+
+endif # DMA_NUMAKER_PDMA
