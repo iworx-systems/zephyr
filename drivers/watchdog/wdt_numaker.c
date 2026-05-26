@@ -197,8 +197,15 @@ static int wdt_numaker_init(const struct device *dev)
 
 	SYS_UnlockReg();
 
-	// Reset WDT on startup
-	cfg->wdt_base->CTL = 0;
+	/*
+	 * Don't write 0 to CTL here.  When CONFIG0.CWDTEN[2:0] != 111 the
+	 * M48x/M45x silicon force-enables the WDT at every reset (WDTEN=1
+	 * locked, RSTEN auto-set to 1).  Writing CTL=0 is refused for the
+	 * WDTEN bit but silently clears RSTEN — leaving the WDT running
+	 * but unable to reset the chip until wdt_setup runs.  That window
+	 * is load-bearing for hardware-WDT-based DFU recovery, so leave
+	 * CTL alone here.  wdt_setup writes all bits explicitly anyway.
+	 */
 
 	irq_disable(DT_INST_IRQN(0));
 	/* CLK controller */
