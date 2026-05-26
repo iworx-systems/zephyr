@@ -31,4 +31,5 @@ config SOC_SERIES
 
 config SOC
 	default "m481" if SOC_M481
+	default "m483" if SOC_M483
 	default "m487" if SOC_M487

@@ -1,0 +1,6 @@
+board:
+  name: numaker_pfm_m483
+  full_name: NUMAKER PFM M483
+  vendor: nuvoton
+  socs:
+  - name: m483
