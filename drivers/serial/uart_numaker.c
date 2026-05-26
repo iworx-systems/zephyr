@@ -829,7 +829,7 @@ static int uart_numaker_irq_tx_complete(const struct device *dev)
 	const struct uart_numaker_config *config = dev->config;
 	UART_T *uart = config->uart;
 
-	return (uart->INTSTS & UART_INTSTS_THREINT_Msk);
+	return (uart->FIFOSTS & UART_FIFOSTS_TXEMPTYF_Msk) ? 1 : 0;
 }
 
 static void uart_numaker_irq_rx_enable(const struct device *dev)
