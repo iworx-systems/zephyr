@@ -1428,7 +1428,11 @@ static int numaker_hsusbd_ep_xfer_user_dma(struct numaker_usbd_ep *ep_cur, uint8
 	base->DMACTL = 0;
 	base->BUSINTSTS = HSUSBD_BUSINTSTS_DMADONEIF_Msk;
 
-	/* DMA memory address */
+	/* DMA memory address.  M480 TRM: HSUSBD_DMAADDR "must be WORD (32-bit)
+	 * aligned" — a misaligned source silently drops the low address bits
+	 * and shifts the transmitted byte stream. */
+	__ASSERT(((uintptr_t)usrbuf & 0x3U) == 0U,
+		 "HSUSBD DMAADDR not word-aligned: %p", (void *)usrbuf);
 	base->DMAADDR = (uint32_t)usrbuf;
 
 	/* DMA transfer size */
@@ -1516,6 +1520,10 @@ static inline void numaker_hsusbd_fastin_arm_chunk(const struct device *dev,
 	 * programs the new DMA without a reset between chunks. */
 	base->BUSINTSTS = HSUSBD_BUSINTSTS_DMADONEIF_Msk;
 
+	/* M480 TRM: HSUSBD_DMAADDR "must be WORD (32-bit) aligned"; a misaligned
+	 * source silently drops the low address bits and shifts the stream. */
+	__ASSERT(((uintptr_t)ptr & 0x3U) == 0U,
+		 "HSUSBD DMAADDR not word-aligned: %p", (void *)ptr);
 	base->DMAADDR = (uint32_t)ptr;
 	base->DMACNT = chunk;
 	base->DMACTL = HSUSBD_DMACTL_SVINEP_Msk | HSUSBD_DMACTL_DMARD_Msk |
