@@ -4,6 +4,7 @@
 # Author: Saravanan Sekar <saravanan@linumiz.com>
 
 zephyr_sources(soc.c)
+zephyr_sources_ifdef(CONFIG_SOC_EARLY_RESET_HOOK soc_early_reset_hook.S)
 
 zephyr_include_directories(.)
 

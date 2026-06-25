@@ -12,6 +12,9 @@ config SOC_SERIES_M48X
 	select RESET
 	select CORTEX_M_SYSTICK if SYS_CLOCK_EXISTS
 	select HAS_POWEROFF
+	# Enable the SPIM cache RAM as system SRAM (upper 32 KB / "Bank1") in
+	# soc_early_reset_hook(), before any stack/RAM is used at reset.
+	select SOC_EARLY_RESET_HOOK
 
 config SOC_M481
 	select HAS_NUMICRO_HAL
