@@ -19,6 +19,16 @@ LOG_MODULE_REGISTER(wdt_numaker, CONFIG_WDT_LOG_LEVEL);
 
 #define WDT_TOUT_MAX 7U
 
+/*
+ * CWDTEN[2:0] in the User Configuration block selects whether the WDT is
+ * software-controlled or force-enabled by hardware at every reset.  The
+ * three bits are scattered: CWDTEN[2] = CONFIG0[31], CWDTEN[1:0] = CONFIG0[4:3]
+ * (M48x/M45x TRM, CONFIG0 description).  Only the value 0b111 leaves the WDT
+ * fully software-controlled; any other value locks WDTEN to 1 ("always on")
+ * and a CTL=0 write can no longer clear it.
+ */
+#define WDT_CWDTEN_SW_CONTROLLED 0x7U
+
 /* Device config */
 struct wdt_numaker_config {
 	/* wdt base address */
@@ -157,11 +167,26 @@ static int wdt_numaker_setup(const struct device *dev, uint8_t options)
 static int wdt_numaker_feed(const struct device *dev, int channel_id)
 {
 	const struct wdt_numaker_config *config = dev->config;
+	unsigned int key;
 
 	ARG_UNUSED(channel_id);
-	
-	/* Reload WDT Counter */
-	config->wdt_base->RSTCNT = WDT_RESET_COUNTER_KEYWORD;
+
+	/* Reload WDT Counter via the WDT_CTL.RSTCNT bit (not the separate
+	 * WDT_RSTCNT keyword register).  On this M48x silicon a write to the
+	 * WDT_RSTCNT register does NOT reload the counter, so the feed is
+	 * silently lost and a force-enabled WDT (CONFIG0.CWDTEN) still resets
+	 * the chip at the timeout.  The CTL.RSTCNT bit reload does work (it's
+	 * what the LDROM bootloader uses).  CTL.RSTCNT is a write-protected
+	 * bit, so lift SYS_REGLCTL first, and mask out the write-1-to-clear
+	 * flags (IF/WKF/RSTF) so the read-modify-write doesn't accidentally
+	 * ack them.  irq_lock guards the REGLCTL unlock sequence. */
+	key = irq_lock();
+	SYS_UnlockReg();
+	config->wdt_base->CTL = (config->wdt_base->CTL &
+				 ~(WDT_CTL_IF_Msk | WDT_CTL_WKF_Msk | WDT_CTL_RSTF_Msk)) |
+				WDT_CTL_RSTCNT_Msk;
+	SYS_LockReg();
+	irq_unlock(key);
 
 	return 0;
 }
@@ -189,6 +214,23 @@ static DEVICE_API(wdt, wdt_numaker_api) = {
 	.feed = wdt_numaker_feed,
 };
 
+/*
+ * Read CONFIG0.CWDTEN[2:0] through the FMC ISP command engine.  A plain AHB
+ * load of FMC_CONFIG_BASE does NOT return the live User Configuration word, so
+ * the read must go through FMC_Read().  Enabling ISP is idempotent and
+ * non-destructive (the soc flash driver also leaves it on); the caller must
+ * already hold SYS_UnlockReg() since FMC->ISPCTL is write-protected.
+ */
+static uint32_t wdt_numaker_read_cwdten(void)
+{
+	uint32_t cfg0;
+
+	FMC_Open();
+	cfg0 = FMC_Read(FMC_CONFIG_BASE);
+
+	return (((cfg0 >> 31) & 0x1U) << 2) | ((cfg0 >> 3) & 0x3U);
+}
+
 static int wdt_numaker_init(const struct device *dev)
 {
 	const struct wdt_numaker_config *cfg = dev->config;
@@ -196,16 +238,6 @@ static int wdt_numaker_init(const struct device *dev)
 	int err;
 
 	SYS_UnlockReg();
-
-	/*
-	 * Don't write 0 to CTL here.  When CONFIG0.CWDTEN[2:0] != 111 the
-	 * M48x/M45x silicon force-enables the WDT at every reset (WDTEN=1
-	 * locked, RSTEN auto-set to 1).  Writing CTL=0 is refused for the
-	 * WDTEN bit but silently clears RSTEN — leaving the WDT running
-	 * but unable to reset the chip until wdt_setup runs.  That window
-	 * is load-bearing for hardware-WDT-based DFU recovery, so leave
-	 * CTL alone here.  wdt_setup writes all bits explicitly anyway.
-	 */
 
 	irq_disable(DT_INST_IRQN(0));
 	/* CLK controller */
@@ -225,6 +257,33 @@ static int wdt_numaker_init(const struct device *dev)
 	err = clock_control_configure(cfg->clk_dev, (clock_control_subsys_t)&scc_subsys, NULL);
 	if (err != 0) {
 		goto done;
+	}
+
+	/*
+	 * Now that the WDT engine clock is running (CTL writes only sync once
+	 * it is), put CTL into a known-disabled state -- but ONLY when the WDT
+	 * is software-controlled (CONFIG0.CWDTEN == 0b111).  This clears a
+	 * stale WDT that an earlier app armed and that survived a warm reset.
+	 *
+	 * When CWDTEN != 0b111 the silicon force-enables the WDT at every
+	 * reset: WDTEN is locked to 1 and a CTL=0 write is refused for WDTEN
+	 * but silently clears RSTEN, leaving the WDT running yet unable to
+	 * reset the chip until wdt_setup runs.  That force-enabled window is
+	 * load-bearing for hardware-WDT-based DFU recovery, so leave CTL
+	 * untouched in that case.  wdt_setup writes every bit explicitly anyway.
+	 *
+	 * NOTE: the numaker clock_control driver re-locks the SYS registers on
+	 * its way out (SYS_LockReg in numaker_scc_on/configure above), so the
+	 * unlock at the top of init no longer holds here.  Re-unlock before
+	 * touching the write-protected FMC->ISPCTL (ISP read) and WDT->CTL
+	 * registers -- otherwise FMC_Open()/the CTL write are silently dropped
+	 * and CONFIG0 reads back as 0.
+	 */
+	SYS_UnlockReg();
+	if (wdt_numaker_read_cwdten() == WDT_CWDTEN_SW_CONTROLLED) {
+		cfg->wdt_base->CTL = 0U;
+		while (cfg->wdt_base->CTL & WDT_CTL_SYNC_Msk) {
+		}
 	}
 
 	/* Enable NVIC */
