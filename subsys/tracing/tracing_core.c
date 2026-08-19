@@ -51,7 +51,19 @@ static void tracing_thread_func(void *dummy1, void *dummy2, void *dummy3)
 
 	while (true) {
 		if (tracing_buffer_is_empty()) {
-			k_sem_take(&tracing_thread_sem, K_FOREVER);
+			/*
+			 * Bounded wait instead of K_FOREVER: the wake signal for
+			 * this thread is the empty->non-empty trigger
+			 * (tracing_trigger_output), which can be missed when
+			 * tracing is enabled late at runtime via the host
+			 * "enable" command (CONFIG_TRACING_HANDLE_HOST_CMD) -
+			 * events then accumulate in the buffer while this thread
+			 * stays parked forever and nothing is ever flushed.
+			 * Re-poll every threshold so buffered data is always
+			 * drained even if a wake was lost.
+			 */
+			k_sem_take(&tracing_thread_sem,
+				   K_MSEC(CONFIG_TRACING_THREAD_WAIT_THRESHOLD));
 		} else {
 			transferring_length =
 				tracing_buffer_get_claim(
