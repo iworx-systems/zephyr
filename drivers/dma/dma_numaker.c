@@ -388,7 +388,7 @@ static int dma_numaker_pdma_config(const struct device *dev, uint32_t channel,
 	ch_data->block_count = dma_cfg->block_count;
 	ch_data->completed_blocks = 0U;
 	ch_data->configured = true;
-	ch_data->scatter_enabled = (dma_cfg->block_count > 1U);
+	ch_data->scatter_enabled = (dma_cfg->head_block->next_block != NULL);
 	ch_data->complete_callback_en = dma_cfg->complete_callback_en;
 	ch_data->error_cb_dis = dma_cfg->error_callback_dis;
 	ch_data->linked_channel = (uint8_t)dma_cfg->linked_channel;
