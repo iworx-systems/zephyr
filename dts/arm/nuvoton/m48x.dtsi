@@ -17,7 +17,7 @@
 	chosen {
 		zephyr,flash-controller = &fmc;
 	};
-	
+
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -74,7 +74,7 @@
 		pdma: dma@40008000 {
 			compatible = "nuvoton,numaker-pdma";
 			reg = <0x40008000 0x1000>;
-			interrupts = <40 0>;
+			interrupts = <40 9>;
 			resets = <&rst NUMAKER_PDMA_RST>;
 			clocks = <&pcc NUMAKER_PDMA_MODULE NUMAKER_MODULE_NoMsk NUMAKER_MODULE_NoMsk>;
 			dma-channels = <16>;
@@ -102,7 +102,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x40004000 0x40>;
 			status = "disabled";
-			interrupts = <16 2>;
+			interrupts = <16 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <16>;
@@ -112,7 +112,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x40004040 0x40>;
 			status = "disabled";
-			interrupts = <17 2>;
+			interrupts = <17 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <16>;
@@ -122,7 +122,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x40004080 0x40>;
 			status = "disabled";
-			interrupts = <18 2>;
+			interrupts = <18 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <15>;
@@ -132,7 +132,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x400040c0 0x40>;
 			status = "disabled";
-			interrupts = <19 2>;
+			interrupts = <19 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <15>;
@@ -142,7 +142,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x40004100 0x40>;
 			status = "disabled";
-			interrupts = <20 2>;
+			interrupts = <20 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <16>;
@@ -152,7 +152,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x40004140 0x40>;
 			status = "disabled";
-			interrupts = <21 2>;
+			interrupts = <21 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <12>;
@@ -162,7 +162,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x40004180 0x40>;
 			status = "disabled";
-			interrupts = <72 2>;
+			interrupts = <72 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <16>;
@@ -172,7 +172,7 @@
 			compatible = "nuvoton,numicro-gpio";
 			reg = <0x400041c0 0x40>;
 			status = "disabled";
-			interrupts = <88 2>;
+			interrupts = <88 12>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <12>;
@@ -181,7 +181,7 @@
 		spi0: spi@40061000 {
 			compatible = "nuvoton,numaker-spi";
 			reg = <0x40061000 0x6c>;
-			interrupts = <23 0>;
+			interrupts = <23 14>;
 			resets = <&rst NUMAKER_SPI0_RST>;
 			clocks = <&pcc NUMAKER_SPI0_MODULE NUMAKER_CLK_CLKSEL2_SPI0SEL_PLL 0>;
 			#address-cells = <1>;
@@ -192,7 +192,7 @@
 		spi1: spi@40062000 {
 			compatible = "nuvoton,numaker-spi";
 			reg = <0x40062000 0x6c>;
-			interrupts = <51 0>;
+			interrupts = <51 14>;
 			resets = <&rst NUMAKER_SPI1_RST>;
 			clocks = <&pcc NUMAKER_SPI1_MODULE NUMAKER_CLK_CLKSEL2_SPI1SEL_PLL 0>;
 			#address-cells = <1>;
@@ -203,7 +203,7 @@
 		spi2: spi@40063000 {
 			compatible = "nuvoton,numaker-spi";
 			reg = <0x40063000 0x6c>;
-			interrupts = <52 0>;
+			interrupts = <52 14>;
 			resets = <&rst NUMAKER_SPI2_RST>;
 			clocks = <&pcc NUMAKER_SPI2_MODULE NUMAKER_CLK_CLKSEL2_SPI2SEL_PLL 0>;
 			#address-cells = <1>;
@@ -214,7 +214,7 @@
 		spi3: spi@40064000 {
 			compatible = "nuvoton,numaker-spi";
 			reg = <0x40064000 0x6c>;
-			interrupts = <62 0>;
+			interrupts = <62 14>;
 			resets = <&rst NUMAKER_SPI3_RST>;
 			clocks = <&pcc NUMAKER_SPI3_MODULE NUMAKER_CLK_CLKSEL2_SPI3SEL_PLL 0>;
 			#address-cells = <1>;
@@ -225,7 +225,7 @@
 		uart0: serial@40070000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40070000 0x1000>;
-			interrupts = <36 0>;
+			interrupts = <36 14>;
 			resets = <&rst NUMAKER_UART0_RST>;
 			clocks = <&pcc NUMAKER_UART0_MODULE NUMAKER_CLK_CLKSEL1_UART0SEL_PLL
 				  NUMAKER_CLK_CLKDIV0_UART0(1)>;
@@ -235,7 +235,7 @@
 		uart1: serial@40071000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40071000 0x1000>;
-			interrupts = <37 0>;
+			interrupts = <37 14>;
 			resets = <&rst NUMAKER_UART1_RST>;
 			clocks = <&pcc NUMAKER_UART1_MODULE NUMAKER_CLK_CLKSEL1_UART1SEL_PLL
 				  NUMAKER_CLK_CLKDIV0_UART1(1)>;
@@ -245,7 +245,7 @@
 		uart2: serial@40072000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40072000 0x1000>;
-			interrupts = <48 0>;
+			interrupts = <48 14>;
 			resets = <&rst NUMAKER_UART2_RST>;
 			clocks = <&pcc NUMAKER_UART2_MODULE NUMAKER_CLK_CLKSEL3_UART2SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART2(1)>;
@@ -255,7 +255,7 @@
 		uart3: serial@40073000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40073000 0x1000>;
-			interrupts = <49 0>;
+			interrupts = <49 14>;
 			resets = <&rst NUMAKER_UART3_RST>;
 			clocks = <&pcc NUMAKER_UART3_MODULE NUMAKER_CLK_CLKSEL3_UART3SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART3(1)>;
@@ -265,7 +265,7 @@
 		uart4: serial@40074000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40074000 0x1000>;
-			interrupts = <74 0>;
+			interrupts = <74 14>;
 			resets = <&rst NUMAKER_UART4_RST>;
 			clocks = <&pcc NUMAKER_UART4_MODULE NUMAKER_CLK_CLKSEL3_UART4SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART4(1)>;
@@ -275,7 +275,7 @@
 		uart5: serial@40075000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40075000 0x1000>;
-			interrupts = <75 0>;
+			interrupts = <75 14>;
 			resets = <&rst NUMAKER_UART5_RST>;
 			clocks = <&pcc NUMAKER_UART5_MODULE NUMAKER_CLK_CLKSEL3_UART5SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART5(1)>;
@@ -285,7 +285,7 @@
 		uart6: serial@40076000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40076000 0x1000>;
-			interrupts = <102 0>;
+			interrupts = <102 14>;
 			resets = <&rst NUMAKER_UART6_RST>;
 			clocks = <&pcc NUMAKER_UART6_MODULE NUMAKER_CLK_CLKSEL3_UART6SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART6(1)>;
@@ -295,7 +295,7 @@
 		uart7: serial@40077000 {
 			compatible = "nuvoton,numaker-uart";
 			reg = <0x40077000 0x1000>;
-			interrupts = <103 0>;
+			interrupts = <103 14>;
 			resets = <&rst NUMAKER_UART7_RST>;
 			clocks = <&pcc NUMAKER_UART7_MODULE NUMAKER_CLK_CLKSEL3_UART7SEL_PLL
 				  NUMAKER_CLK_CLKDIV4_UART7(1)>;
@@ -305,7 +305,7 @@
 		bpwm0: bpwm@4005a000 {
 			compatible = "nuvoton,numaker-bpwm";
 			reg = <0x4005a000 0x1000>;
-			interrupts = <78 0>;
+			interrupts = <78 14>;
 			interrupt-names = "bpwm0";
 			resets = <&rst NUMAKER_BPWM0_RST>;
 			prescaler = <19>;
@@ -317,7 +317,7 @@
 		bpwm1: bpwm@4005b000 {
 			compatible = "nuvoton,numaker-bpwm";
 			reg = <0x4005b000 0x1000>;
-			interrupts = <79 0>;
+			interrupts = <79 14>;
 			interrupt-names = "bpwm1";
 			resets = <&rst NUMAKER_BPWM1_RST>;
 			prescaler = <19>;
@@ -329,7 +329,7 @@
 		epwm0: epwm@40058000 {
 			compatible = "nuvoton,numaker-pwm";
 			reg = <0x40058000 0x37c>;
-			interrupts = <25 0>, <26 0>, <27 0>;
+			interrupts = <25 14>, <26 14>, <27 14>;
 			interrupt-names = "pair0", "pair1", "pair2";
 			resets = <&rst NUMAKER_EPWM0_RST>;
 			prescaler = <19>;
@@ -341,7 +341,7 @@
 		epwm1: epwm@40059000 {
 			compatible = "nuvoton,numaker-pwm";
 			reg = <0x40059000 0x37c>;
-			interrupts = <29 0>, <30 0>, <31 0>;
+			interrupts = <29 14>, <30 14>, <31 14>;
 			interrupt-names = "pair0", "pair1", "pair2";
 			resets = <&rst NUMAKER_EPWM1_RST>;
 			prescaler = <19>;
@@ -354,7 +354,7 @@
 			compatible = "nuvoton,numaker-i2c";
 			clock-frequency = <I2C_BITRATE_STANDARD>;
 			reg = <0x40080000 0x1000>;
-			interrupts = <38 0>;
+			interrupts = <38 14>;
 			resets = <&rst NUMAKER_I2C0_RST>;
 			clocks = <&pcc NUMAKER_I2C0_MODULE 0 0>;
 			status = "disabled";
@@ -366,7 +366,7 @@
 			compatible = "nuvoton,numaker-i2c";
 			clock-frequency = <I2C_BITRATE_STANDARD>;
 			reg = <0x40081000 0x1000>;
-			interrupts = <39 0>;
+			interrupts = <39 14>;
 			resets = <&rst NUMAKER_I2C1_RST>;
 			clocks = <&pcc NUMAKER_I2C1_MODULE 0 0>;
 			status = "disabled";
@@ -378,7 +378,7 @@
 			compatible = "nuvoton,numaker-i2c";
 			clock-frequency = <I2C_BITRATE_STANDARD>;
 			reg = <0x40082000 0x1000>;
-			interrupts = <82 0>;
+			interrupts = <82 14>;
 			resets = <&rst NUMAKER_I2C2_RST>;
 			clocks = <&pcc NUMAKER_I2C2_MODULE 0 0>;
 			status = "disabled";
@@ -389,7 +389,7 @@
 		eadc0: eadc@40043000 {
 			compatible = "nuvoton,numaker-adc";
 			reg = <0x40043000 0xffc>;
-			interrupts = <42 0>;
+			interrupts = <42 14>;
 			resets = <&rst NUMAKER_EADC_RST>;
 			clocks = <&pcc NUMAKER_EADC_MODULE
 				  NUMAKER_NA /* HCLK is the only non-configurable clock source */
@@ -402,7 +402,7 @@
 		eadc1: eadc@4004b000 {
 			compatible = "nuvoton,numaker-adc";
 			reg = <0x4004b000 0xffc>;
-			interrupts = <104 0>;
+			interrupts = <104 14>;
 			resets = <&rst NUMAKER_EADC1_RST>;
 			clocks = <&pcc NUMAKER_EADC1_MODULE
 				  NUMAKER_NA /* HCLK is the only non-configurable clock source */
@@ -433,7 +433,7 @@
 		usbd: usbd@400c0000 {
 			compatible = "nuvoton,numaker-usbd";
 			reg = <0x400c0000 0x1000>;
-			interrupts = <53 0>;
+			interrupts = <53 13>;
 			resets = <&rst NUMAKER_USBD_RST>;
 			clocks = <&pcc NUMAKER_USBD_MODULE NUMAKER_CLK_CLKSEL0_USBSEL_PLL
 				  NUMAKER_CLK_CLKDIV0_USB(4)>;
@@ -444,12 +444,12 @@
 			disallow-iso-in-out-same-number;
 			allow-disable-usb-on-unplug;
 		};
-		
+
 		hsusbd: hsusbd@40019000 {
 			compatible = "nuvoton,numaker-hsusbd";
 			reg = <0x40019000 0x1000>;
-			interrupts = <65 0>;
-			resets = <&rst NUMAKER_HSUSBD_RST>; 
+			interrupts = <65 13>;
+			resets = <&rst NUMAKER_HSUSBD_RST>;
 			clocks = <&pcc NUMAKER_HSUSBD_MODULE NUMAKER_MODULE_NoMsk
 				  NUMAKER_MODULE_NoMsk>;
 			dma-buffer-size = <4096>;
@@ -470,7 +470,7 @@
 		timer0: timer@40050000 {
 			compatible = "nuvoton,numaker-timer";
 			reg = <0x40050000 0x100>;
-			interrupts = <32 0>;
+			interrupts = <32 10>;
 			resets = <&rst NUMAKER_TMR0_RST>;
 			clocks = <&pcc NUMAKER_TMR0_MODULE
 				  NUMAKER_CLK_CLKSEL1_TMR0SEL_PCLK0 0>;
@@ -481,7 +481,7 @@
 		timer1: timer@40050100 {
 			compatible = "nuvoton,numaker-timer";
 			reg = <0x40050100 0x100>;
-			interrupts = <33 0>;
+			interrupts = <33 10>;
 			resets = <&rst NUMAKER_TMR1_RST>;
 			clocks = <&pcc NUMAKER_TMR1_MODULE
 				  NUMAKER_CLK_CLKSEL1_TMR1SEL_PCLK0 0>;
@@ -492,7 +492,7 @@
 		timer2: timer@40051000 {
 			compatible = "nuvoton,numaker-timer";
 			reg = <0x40051000 0x100>;
-			interrupts = <34 0>;
+			interrupts = <34 10>;
 			resets = <&rst NUMAKER_TMR2_RST>;
 			clocks = <&pcc NUMAKER_TMR2_MODULE
 				  NUMAKER_CLK_CLKSEL1_TMR2SEL_PCLK1 0>;
@@ -503,13 +503,13 @@
 		timer3: timer@40051100 {
 			compatible = "nuvoton,numaker-timer";
 			reg = <0x40051100 0x100>;
-			interrupts = <35 0>;
+			interrupts = <35 10>;
 			resets = <&rst NUMAKER_TMR3_RST>;
 			clocks = <&pcc NUMAKER_TMR3_MODULE
 				  NUMAKER_CLK_CLKSEL1_TMR3SEL_PCLK1 0>;
 			prescaler = <0>;
 			status = "disabled";
-		}; 
+		};
 	};
 };
 
