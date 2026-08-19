@@ -669,6 +669,13 @@ static int numaker_usbd_enable_usb_phy(const struct device *dev)
 
 		base->PHYCTL |= HSUSBD_PHYCTL_PHYEN_Msk;
 		#if defined(CONFIG_SOC_SERIES_M48X)
+		// WAIT_FOR((base->BUSINTSTS & HSUSBD_BUSINTEN_PHYCLKVLDIEN_Msk) == HSUSBD_BUSINTEN_PHYCLKVLDIEN_Msk,
+		// 	 NUMAKER_HSUSBD_PHY_STABLE_TIMEOUT_US,
+		// 	 ;);
+		// if (!(base->PHYCTL & HSUSBD_PHYCTL_PHYCLKSTB_Msk)) {
+		// 	return -EIO;
+		// }
+		// TODO: implement above
 		k_busy_wait(1000);
 		#else
 		WAIT_FOR(base->PHYCTL & HSUSBD_PHYCTL_PHYCLKSTB_Msk,
