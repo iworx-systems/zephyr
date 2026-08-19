@@ -1575,7 +1575,6 @@ static int numaker_hsusbd_fastin_start(const struct device *dev,
 				       struct numaker_usbd_ep *ep_cur,
 				       struct net_buf *buf)
 {
-	const struct udc_numaker_config *config = dev->config;
 	struct udc_numaker_data *priv = udc_get_private(dev);
 	struct udc_ep_config *ep_cfg = udc_get_ep_cfg(dev, ep_cur->addr);
 	uint32_t total = buf->len;
