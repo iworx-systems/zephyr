@@ -96,7 +96,7 @@
 };
 
 &usbd{
-	status = "disbaled";
+	status = "disabled";
 	pinctrl-0 = <&usbd_default>;
 	pinctrl-names = "default";
 };
