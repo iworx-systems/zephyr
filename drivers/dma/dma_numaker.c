@@ -753,6 +753,16 @@ static void dma_numaker_pdma_isr(const struct device *dev)
 	if ((intsts & PDMA_INTSTS_ALIGNF_Msk) != 0U) {
 		dma_numaker_pdma_complete_cb(dev, PDMA_GET_ALIGN_STS(cfg->pdma), -EIO);
 	}
+
+	// Timeout on channel 0
+	if ((intsts & PDMA_INTSTS_REQTOF0_Msk) != 0U) {
+		dma_numaker_pdma_complete_cb(dev, BIT(0), -ETIME);
+	}
+
+	// Timeout on channel 1
+	if ((intsts & PDMA_INTSTS_REQTOF1_Msk) != 0U) {
+		dma_numaker_pdma_complete_cb(dev, BIT(1), -ETIME);
+	}
 }
 
 static int dma_numaker_pdma_init(const struct device *dev)
